@@ -1,0 +1,9 @@
+/build/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.o
+*.elf
+*.map
+*.bin
+*.zigbee
