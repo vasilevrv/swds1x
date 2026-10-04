@@ -7,14 +7,14 @@
 #define PA_ENABLE                0
 #define GSUART_PRINTF_MODE       0
 #define UART_PRINTF_MODE         0
-/* Meter pins are reserved. Do not enable the SDK's UART update protocol. */
+/* UART firmware update is disabled. */
 #define MODULE_UART_ENABLE       0
 #define VOLTAGE_DETECT_ENABLE    0
 #define FLASH_PROTECT_ENABLE     1
 #define MODULE_WATCHDOG_ENABLE   0
 
 #include "version_cfg.h"
-#include "../board_smart_plug_8258.h"
+#include "../board_relay_2ch_8258.h"
 
 typedef enum {
     EV_POLL_UART_PROC,

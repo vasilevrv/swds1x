@@ -15,11 +15,12 @@ typedef int32_t s32;
 #define FLASH_PROTECT_ENABLE 1
 #define LED_PERMIT 0
 #define SYSTEM_RESET() assert(!"unexpected reset")
-#define REBOOT() assert(!"unexpected boot")
+#define REBOOT() (++bootCount)
 
 static u8 memory[0x100000];
 static bool noAppFlg;
-static u32 eraseCount, crcCount;
+static u32 eraseCount, crcCount, bootCount;
+static bool validCRC;
 static void drv_disable_irq(void) {}
 static void flash_unlock(void) {}
 static void flash_lock(void) {}
@@ -29,18 +30,18 @@ static void flash_read(u32 address, u32 size, u8 *data) {
     memcpy(data, memory + address, size);
 }
 static void flash_write(u32 address, u32 size, u8 *data) {
-    assert(address >= 0x7a000 && address + size <= 0xe4000);
-    memcpy(memory + address, data, size);
+    assert(address >= 0x10000 && address + size <= 0xe4000);
+    for (u32 i=0; i<size; i++) memory[address+i] &= data[i];
 }
 static void flash_erase(u32 address) {
-    assert(address >= 0x7a000 && address <= 0xe3000 && !(address & 4095));
+    assert(address >= 0x10000 && address <= 0xe3000 && !(address & 4095));
     memset(memory + address, 0xff, 4096);
     eraseCount++;
 }
 static u32 xcrc32(u8 *data, u32 size, u32 crc) {
     (void)data; (void)size; (void)crc;
     crcCount++;
-    return 0; /* Inputs use a mismatching stored CRC: never copy to application. */
+    return validCRC ? 0xffffffff : 0;
 }
 #include "bootloader_sources.inc"
 
@@ -58,5 +59,21 @@ int main(void) {
         assert((crcCount != 0) == valid);
         assert(noAppFlg);
     }
-    puts("PASS: bootloader corrupt OTA sizes, CRC bounds, erase confined to OTA slot");
+    /* Accepted OTA is copied, read back, and booted; NV remains untouched. */
+    memset(memory, 0xff, sizeof(memory));
+    u32 size=0x114;
+    for (u32 i=0; i<size-4; i++) memory[0x7a000+i]=(u8)i;
+    memcpy(memory+0x7a008,"KNLT",4);
+    memcpy(memory+0x7a018,&size,4);
+    memory[0x7a006]=0x5d; memory[0x7a007]=0x02;
+    u8 expected[0x200]; memcpy(expected,memory+0x7a000,sizeof(expected));
+    memory[0xe4000]=0x5a; validCRC=true; noAppFlg=false; eraseCount=0;
+    bootloader_with_ota_check(0x10000,0x7a000);
+    assert(bootCount==1 && !noAppFlg && eraseCount==2);
+    assert(!memcmp(memory+0x10000,expected,sizeof(expected)));
+    assert(memory[0xe4000]==0x5a);
+    for (u32 i=0x7a000; i<0x7b000; i++) assert(memory[i]==0xff);
+    bootloader_with_ota_check(0x10000,0x7a000);
+    assert(bootCount==2 && eraseCount==2);
+    puts("PASS: bootloader corrupt OTA sizes, CRC bounds, bounded erase, accepted OTA copy/readback/reboot, NV preservation and subsequent boot");
 }

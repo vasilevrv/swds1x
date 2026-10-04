@@ -18,9 +18,9 @@ def zcl_string(name):
     return "".join(values[1:])
 
 assert zcl_string("ZCL_BASIC_MFG_NAME") == "Salu Workshop"
-assert zcl_string("ZCL_BASIC_MODEL_ID") == "SWPLUG1x"
-assert zcl_string("ZCL_BASIC_SW_BUILD_ID").endswith("04")
-print("PASS: Salu Workshop / SWPLUG1x Zigbee string lengths and build identity")
+assert zcl_string("ZCL_BASIC_MODEL_ID") == "swrelay2x"
+assert zcl_string("ZCL_BASIC_SW_BUILD_ID") == "2026100404"
+print("PASS: Salu Workshop / swrelay2x Zigbee string lengths and build identity")
 
 spec = importlib.util.spec_from_file_location("prepare_firmware", Path(__file__).resolve().parents[1] / "tools/prepare_firmware.py")
 module = importlib.util.module_from_spec(spec)
@@ -105,3 +105,41 @@ for bad_boot, bad_app in ((prepared(0x10000), app), (boot, prepared(0x6A000)),
     else:
         raise AssertionError("Invalid merge input accepted")
 print("PASS: merged offsets, FF gap, independent CRCs, slot/CRC/input rejection")
+
+spec = importlib.util.spec_from_file_location("make_ota", tool.parent / "make_ota.py")
+import sys
+sys.path.insert(0, str(tool.parent))
+ota = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ota)
+raw = bytearray(64)
+raw[8:12] = b"KNLT"
+# Match platform/boot/8258/cstartup_8258.S: two-byte TJ, then FILE_VERSION.
+struct.pack_into("<I", raw, 2, 0x11044001)
+assert struct.unpack_from("<I", raw, 4)[0] == 0x00001104
+struct.pack_into("<HH", raw, 0x12, 0x1141, 0x03D3)
+struct.pack_into("<I", raw, 0x18, 64)
+firmware = module.prepare(bytes(raw))
+container = ota.package(bytes(raw), firmware)
+assert struct.unpack_from("<I", container, 0)[0] == 0x0BEEF11E
+assert struct.unpack_from("<HHI", container, 10) == (0x1141, 0x03D3, 0x11044001)
+assert struct.unpack_from("<I", container, 14)[0] > 285360129
+assert b"swrelay2x" in container[20:52]
+assert struct.unpack_from("<I", container, 52)[0] == len(container)
+assert struct.unpack_from("<HI", container, 56) == (0, len(firmware))
+assert container[62:] == firmware
+for bad in (0x03D2, 0x03D1):
+    previous = bytearray(raw)
+    struct.pack_into("<H", previous, 0x14, bad)
+    try:
+        ota.package(bytes(previous), module.prepare(bytes(previous)))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Smart-plug or unrelated OTA image accepted")
+try:
+    ota.package(bytes(raw), prepared(64))
+except ValueError:
+    pass
+else:
+    raise AssertionError("Mismatched raw/prepared OTA inputs accepted")
+print("PASS: relay OTA identity/version/header/payload, old smart-plug image rejection, mismatched input rejection")

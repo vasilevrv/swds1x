@@ -1,49 +1,53 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-
-// Execute the real converter logic with substitutes for expose/extension
-// factories only. This does not emulate a coordinator or herdsman transport.
-const source = readFileSync(new URL('../zigbee2mqtt/smart_plug_hlw8032.mjs', import.meta.url), 'utf8')
-    .replace(/^import .*;\r?\n/gm, '');
+const source = readFileSync(new URL('../zigbee2mqtt/relay_2ch.mjs', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gm, '');
 const substitutes = `
 const chain = () => new Proxy({}, {get: () => () => chain()});
-const e = {numeric: chain};
-const ea = {STATE_GET: 5, ALL: 7};
-const m = {deviceAddCustomCluster: (name, definition) => ({name, definition}), onOff: () => ({})};
+const e = {binary: chain, action: chain};
+const ea = {ALL: 7};
+const m = {deviceAddCustomCluster: (name, definition) => ({name, definition}), deviceEndpoints: (args) => args, onOff: (args) => args};
 `;
 const {default: definition} = await import(`data:text/javascript;base64,${Buffer.from(substitutes + source).toString('base64')}`);
-assert.deepEqual(definition.fingerprint.map((f) => f.modelID), ['SWPLUG1x', 'SMART_PLUG_BL0937', 'SMART_PLUG_HLW8032']);
-assert.equal(definition.fingerprint[0].manufacturerName, 'Salu Workshop');
-assert.equal(definition.vendor, 'Salu Workshop');
-assert.equal(definition.model, 'SWPLUG1x');
+assert.deepEqual(definition.fingerprint, [{modelID: 'swrelay2x', manufacturerName: 'Salu Workshop'}]);
 assert.equal(definition.ota, true);
-const cluster = definition.extend[0].definition;
-assert.equal(cluster.name, 'smartPlugConfig');
-assert.equal(cluster.attributes.telemetryIntervalMs.name, 'telemetryIntervalMs');
-assert.equal(cluster.attributes.telemetryIntervalMs.write, true);
-assert.equal(cluster.attributes.telemetryIntervalMs.type, 0x23);
-const [electrical, metering, interval] = definition.fromZigbee;
-assert.deepEqual(electrical.convert(null, {data: {rmsVoltage: 2300, rmsCurrent: 1000, activePower: 230, apparentPower: 230, powerFactor: 100}}),
-    {voltage: 230, current: 1, power: 230, apparent_power: 230, power_factor: 1});
-assert.deepEqual(electrical.convert(null, {data: {rmsVoltage: 65535, rmsCurrent: null, activePower: -32768, apparentPower: NaN, powerFactor: -128}}),
-    {voltage: null, current: null, power: null, apparent_power: null, power_factor: null});
-assert.deepEqual(metering.convert(null, {data: {currentSummDelivered: 1000000}}), {energy: 1});
-assert.deepEqual(metering.convert(null, {data: {currentSummDelivered: [1, 2]}}), {energy: 4294.967298});
-assert.deepEqual(metering.convert(null, {data: {currentSummDelivered: [65535, 4294967295]}}), {energy: null});
-assert.deepEqual(interval.convert(null, {data: {0: 5000}}), {telemetry_interval_ms: 5000});
+assert.deepEqual(definition.extend[1].endpoints, {l1: 1, l2: 2});
+assert.deepEqual(definition.extend[2].endpointNames, ['l1', 'l2']);
+const custom = definition.extend[0].definition;
+assert.equal(custom.ID, 0xfc00);
+assert.equal(custom.attributes.buttonLinked.type, 0x10);
+assert.equal(custom.attributes.doubleClickEnabled.type, 0x10);
+assert.equal(custom.commandsResponse.buttonEvent.parameters[0].type, 0x30);
+const [config, actions] = definition.fromZigbee;
+assert.deepEqual(config.convert(null, {endpoint: {ID: 1}, data: {buttonLinked: 1, doubleClickEnabled: false}}), {button_1_linked: true, button_1_double_click: false});
+assert.deepEqual(config.convert(null, {endpoint: {ID: 2}, data: {0: 0, 1: 1}}), {button_2_linked: false, button_2_double_click: true});
+assert.deepEqual(config.convert(null, {endpoint: {ID: 2}, data: {buttonLinked: 2, doubleClickEnabled: null}}), {});
+for (const endpoint of [1, 2]) for (const [event, name] of ['single', 'double', 'hold'].entries()) {
+    const message = {endpoint: {ID: endpoint}, data: {event}};
+    const expected = {action: `button_${endpoint}_${name}`};
+    assert.deepEqual(actions.convert(null, message), expected);
+    assert.deepEqual(actions.convert(null, message), expected); // Identical successive events remain events.
+}
+assert.equal(actions.convert(null, {endpoint: {ID: 3}, data: {event: 0}}), undefined);
+for (const event of [-1, 3, null, '0', NaN]) assert.equal(actions.convert(null, {endpoint: {ID: 1}, data: {event}}), undefined);
 const setter = definition.toZigbee[0];
 const calls = [];
-const entity = {
-    write: async (...args) => calls.push(['write', ...args]),
-    read: async (...args) => { calls.push(['read', ...args]); return {telemetryIntervalMs: 5000}; },
-};
-assert.deepEqual(await setter.convertSet(entity, 'telemetry_interval_ms', 5000), {state: {telemetry_interval_ms: 5000}});
-assert.equal(calls[0][0], 'write');
-assert.deepEqual(calls[0][2], {telemetryIntervalMs: 5000});
-for (const invalid of [99, 3600001, 100.5, '5000', null]) {
-    await assert.rejects(setter.convertSet(entity, 'telemetry_interval_ms', invalid));
+let readback = false;
+let registered = false;
+const device = {addCustomCluster: (name, definition) => {
+    assert.equal(name, 'relay2Config'); assert.equal(definition.ID, 0xfc00); registered = true;
+}, getEndpoint: (id) => ({
+    write: async (...args) => {assert(registered); calls.push(['write', id, ...args]);},
+    read: async (cluster, attributes) => {assert(registered); calls.push(['read', id, cluster, attributes]); return {[attributes[0]]: readback};},
+})};
+for (const key of setter.key) {
+    calls.length = 0; readback = true; registered = false;
+    assert.deepEqual(await setter.convertSet(null, key, true, {device}), {state: {[key]: true}});
+    assert.equal(calls[0][1], key.includes('_1_') ? 1 : 2);
+    assert.deepEqual(calls[0][3], {[key.endsWith('_linked') ? 'buttonLinked' : 'doubleClickEnabled']: true});
+    registered = false; await setter.convertGet(null, key, {device});
+    for (const invalid of ['true', 1, null, {}, NaN]) await assert.rejects(setter.convertSet(null, key, invalid, {device}));
 }
-const writesBefore = calls.length;
-assert.equal(writesBefore, 2);
-await assert.rejects(setter.convertSet({...entity, read: async () => ({telemetryIntervalMs: null})}, 'telemetry_interval_ms', 5000));
-console.log('PASS: converter fingerprints, writable uint32 interval, readback, bounds, units, invalid values, uint48 energy (transport not simulated)');
+readback = 2; await assert.rejects(setter.convertSet(null, 'button_1_linked', true, {device}));
+calls.length = 0; await definition.configure({...device, addCustomCluster: () => {}});
+assert.deepEqual(calls.map((call) => call[1]), [1, 2]);
+console.log('PASS: converter identity, endpoints, Boolean settings/readback/routing, six button actions, repeated events, invalid values and initial configuration');

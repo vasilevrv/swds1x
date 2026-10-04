@@ -1,7 +1,7 @@
 /********************************************************************************************************
  * @file    app_main.c
  *
- * @brief   Smart plug application entry point.
+ * @brief   Two-channel relay application entry point.
  *
  * @author  Zigbee Group
  * @date    2021
@@ -24,7 +24,7 @@
  *******************************************************************************************************/
 #include "app_cfg.h"
 
-#if (__PROJECT_TL_SMART_PLUG__)
+#if (__PROJECT_TL_RELAY_2CH__)
 
 /**********************************************************************
  * INCLUDES
@@ -35,9 +35,9 @@
 #include "bdb.h"
 #include "ota.h"
 #include "app_main.h"
-#include "plug_control.h"
-#include "smart_plug.h"
-#include "energy_meter.h"
+#include "relay_control.h"
+#include "relay_2ch.h"
+#include "board_io.h"
 #include "app_ui.h"
 #if ZBHCI_EN
 #include "zbhci.h"
@@ -56,14 +56,14 @@
 /**********************************************************************
  * GLOBAL VARIABLES
  */
-app_ctx_t gSmartPlugCtx;
+app_ctx_t gRelayCtx;
 
 
 #ifdef ZCL_OTA
-extern ota_callBack_t smartPlug_otaCb;
+extern ota_callBack_t relay2_otaCb;
 
 //running code firmware information
-ota_preamble_t smartPlug_otaInfo = {
+ota_preamble_t relay2_otaInfo = {
     .fileVer          = FILE_VERSION,
     .imageType        = IMAGE_TYPE,
     .manufacturerCode = MANUFACTURER_CODE,
@@ -75,15 +75,15 @@ const zdo_appIndCb_t appCbLst = {
     bdb_zdoStartDevCnf,                 //start device cnf cb
     NULL,                               //reset cnf cb
     NULL,                               //device announce indication cb
-    smartPlug_leaveIndHandler,          //leave ind cb
-    smartPlug_leaveCnfHandler,          //leave cnf cb
-    smartPlug_panidConflictIndicateHandler,//nwk panid conflict ind cb
+    relay2_leaveIndHandler,          //leave ind cb
+    relay2_leaveCnfHandler,          //leave cnf cb
+    relay2_panidConflictIndicateHandler,//nwk panid conflict ind cb
     NULL,                               //permit join ind cb
     NULL,                               //nlme sync cnf cb
     NULL,                               //tc join ind cb
     NULL,                               //tc detects that the frame counter is near limit
     NULL,                               //end device negotiate cnf cb
-    smartPlug_nwkStatusIndHandler,      //nwk status ind cb
+    relay2_nwkStatusIndHandler,      //nwk status ind cb
 };
 
 /**
@@ -154,20 +154,24 @@ void user_app_init(void)
 
     /* Initialize ZCL layer */
     /* Register Incoming ZCL Foundation command/response messages */
-    zcl_init(smartPlug_zclProcessIncomingMsg);
+    zcl_init(relay2_zclProcessIncomingMsg);
 
     /* Register endPoint */
-    af_endpointRegister(SMART_PLUG_ENDPOINT, (af_simple_descriptor_t *)&g_smartPlugSimpleDesc, smartPlug_zclRxHandler, NULL);
+    for (u8 ch = 0; ch < RELAY_CHANNELS; ch++) {
+        af_endpointRegister(ch + 1, (af_simple_descriptor_t *)&g_relay2SimpleDesc[ch], relay2_zclRxHandler, NULL);
+    }
     /* Initialize or restore attributes, this must before 'zcl_register()' */
-    zcl_smartPlugAttrsInit();
+    zcl_relay2AttrsInit();
     zcl_reportingTabInit();
 
     /* Register ZCL specific cluster information */
-    zcl_register(SMART_PLUG_ENDPOINT, g_smartPlugClusterCount, (zcl_specClusterInfo_t *)g_smartPlugClusterList);
+    for (u8 ch = 0; ch < RELAY_CHANNELS; ch++) {
+        zcl_register(ch + 1, g_relay2ClusterCount, (zcl_specClusterInfo_t *)g_relay2ClusterList[ch]);
+    }
 
 #if ZCL_OTA_SUPPORT
     /* Initialize OTA */
-    ota_init(OTA_TYPE_CLIENT, (af_simple_descriptor_t *)&g_smartPlugSimpleDesc, &smartPlug_otaInfo, &smartPlug_otaCb);
+    ota_init(OTA_TYPE_CLIENT, (af_simple_descriptor_t *)&g_relay2SimpleDesc[0], &relay2_otaInfo, &relay2_otaCb);
 #endif
 
 }
@@ -175,19 +179,18 @@ void user_app_init(void)
 void app_task(void)
 {
     app_key_handler();
-    if (gSmartPlugCtx.factoryResetPending) {
+    if (gRelayCtx.factoryResetPending) {
         return; /* Do not recreate application NV data while the stack resets. */
     }
-    smartPlug_networkTask();
-    energy_meter_task();
-    smartPlug_task();
+    relay2_networkTask();
+    relay2_task();
 
     if (BDB_STATE_GET() == BDB_STATE_IDLE) {
         report_handler();
     }
 }
 
-static void smartPlugSysException(void)
+static void relay2SysException(void)
 {
     SYSTEM_RESET();
 }
@@ -206,9 +209,10 @@ void user_init(bool isRetention)
     (void)isRetention;
 
     /* Register the system exception handler. */
-    sys_exceptHandlerRegister(smartPlugSysException);
+    sys_exceptHandlerRegister(relay2SysException);
 
     /* Initialize the status LED and keep the relay inactive during startup. */
+    board_io_init();
     led_init();
 
     relay_init();
@@ -219,9 +223,7 @@ void user_init(bool isRetention)
     /* Initialize user application */
     user_app_init();
 
-    /* Restore metering state and start the selected energy meter. */
-    smartPlug_init();
-    energy_meter_init();
+    app_buttons_init();
 
     /* Apply the restored relay state. */
     relay_restore();
@@ -238,18 +240,20 @@ void user_init(bool isRetention)
     ev_on_poll(EV_POLL_IDLE, app_task);
 
     /* Read the pre-install code from NV */
-    if (bdb_preInstallCodeLoad(&gSmartPlugCtx.tcLinkKey.keyType, gSmartPlugCtx.tcLinkKey.key) == RET_OK) {
-        g_bdbCommissionSetting.linkKey.tcLinkKey.keyType = gSmartPlugCtx.tcLinkKey.keyType;
-        g_bdbCommissionSetting.linkKey.tcLinkKey.key = gSmartPlugCtx.tcLinkKey.key;
+    if (bdb_preInstallCodeLoad(&gRelayCtx.tcLinkKey.keyType, gRelayCtx.tcLinkKey.key) == RET_OK) {
+        g_bdbCommissionSetting.linkKey.tcLinkKey.keyType = gRelayCtx.tcLinkKey.keyType;
+        g_bdbCommissionSetting.linkKey.tcLinkKey.key = gRelayCtx.tcLinkKey.key;
     }
 
     /* Set default reporting configuration */
     u8 reportableChange[2] = {0x00, 0x00};
-    bdb_defaultReportingCfg(SMART_PLUG_ENDPOINT, HA_PROFILE_ID,
-                            ZCL_CLUSTER_GEN_ON_OFF, ZCL_ATTRID_ONOFF,
-                            1, 120, (u8 *)&reportableChange);//min = 1s, max = 120s
+    for (u8 ch = 0; ch < RELAY_CHANNELS; ch++) {
+        bdb_defaultReportingCfg(ch + 1, HA_PROFILE_ID,
+                                ZCL_CLUSTER_GEN_ON_OFF, ZCL_ATTRID_ONOFF,
+                                0, 120, (u8 *)&reportableChange);
+    }
     /* Initialize BDB */
-    bdb_init((af_simple_descriptor_t *)&g_smartPlugSimpleDesc, &g_bdbCommissionSetting, &g_zbDemoBdbCb, 1);
+    bdb_init((af_simple_descriptor_t *)&g_relay2SimpleDesc[0], &g_bdbCommissionSetting, &g_zbDemoBdbCb, 1);
 }
 
-#endif  /* __PROJECT_TL_SMART_PLUG__ */
+#endif  /* __PROJECT_TL_RELAY_2CH__ */

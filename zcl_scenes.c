@@ -1,11 +1,11 @@
 #include "app_cfg.h"
 
-#if (__PROJECT_TL_SMART_PLUG__)
+#if (__PROJECT_TL_RELAY_2CH__)
 
 #include "tl_common.h"
 #include "zb_api.h"
 #include "zcl_include.h"
-#include "smart_plug.h"
+#include "relay_2ch.h"
 #include "app_main.h"
 
 static void sceneRecall(zclIncomingAddrInfo_t *address, zcl_sceneEntry_t *scene)
@@ -39,15 +39,15 @@ static void sceneRecall(zclIncomingAddrInfo_t *address, zcl_sceneEntry_t *scene)
         }
         if ((clusterId == ZCL_CLUSTER_GEN_ON_OFF) && (length >= 1) &&
             (data[0] <= ZCL_ONOFF_STATUS_ON)) {
-            smartPlug_onOffCb(address, data[0], NULL);
+            relay2_onOffCb(address, data[0], NULL);
         }
         data += length;
     }
 }
 
-static void sceneStore(zcl_sceneEntry_t *scene)
+static void sceneStore(u8 channel, zcl_sceneEntry_t *scene)
 {
-    zcl_onOffAttr_t *onOff = zcl_onoffAttrGet();
+    zcl_onOffAttr_t *onOff = zcl_onoffAttrGet(channel);
     scene->extField[0] = LO_UINT16(ZCL_CLUSTER_GEN_ON_OFF);
     scene->extField[1] = HI_UINT16(ZCL_CLUSTER_GEN_ON_OFF);
     scene->extField[2] = 1;
@@ -55,15 +55,16 @@ static void sceneStore(zcl_sceneEntry_t *scene)
     scene->extFieldLen = 4;
 }
 
-status_t smartPlug_sceneCb(zclIncomingAddrInfo_t *address, u8 commandId, void *payload)
+status_t relay2_sceneCb(zclIncomingAddrInfo_t *address, u8 commandId, void *payload)
 {
-    if ((address->dstEp != SMART_PLUG_ENDPOINT) ||
+    int channel = relay2_channelFromEndpoint(address->dstEp);
+    if ((channel < 0) ||
         (address->dirCluster != ZCL_FRAME_CLIENT_SERVER_DIR)) {
         return ZCL_STA_SUCCESS;
     }
 
     if (commandId == ZCL_CMD_SCENE_STORE_SCENE) {
-        sceneStore((zcl_sceneEntry_t *)payload);
+        sceneStore(channel, (zcl_sceneEntry_t *)payload);
         return ZCL_STA_SUCCESS;
     }
     if (commandId == ZCL_CMD_SCENE_RECALL_SCENE) {

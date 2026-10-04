@@ -24,7 +24,7 @@
  *******************************************************************************************************/
 #include "app_cfg.h"
 
-#if (__PROJECT_TL_SMART_PLUG__)
+#if (__PROJECT_TL_RELAY_2CH__)
 
 /**********************************************************************
  * INCLUDES
@@ -35,7 +35,7 @@
 #include "bdb.h"
 #include "ota.h"
 #include "app_main.h"
-#include "plug_control.h"
+#include "relay_control.h"
 
 /**********************************************************************
  * TYPEDEFS
@@ -60,8 +60,8 @@ bdb_appCb_t g_zbDemoBdbCb = {
 };
 
 #ifdef ZCL_OTA
-ota_callBack_t smartPlug_otaCb = {
-    smartPlug_otaProcessMsgHandler,
+ota_callBack_t relay2_otaCb = {
+    relay2_otaProcessMsgHandler,
 };
 #endif
 
@@ -77,7 +77,7 @@ static u32 retryStarted;
 /**********************************************************************
  * FUNCTIONS
  */
-static s32 smartPlug_bdbNetworkSteerStart(void *arg)
+static s32 relay2_bdbNetworkSteerStart(void *arg)
 {
     (void)arg;
     steerTimerEvt = NULL;
@@ -88,19 +88,19 @@ static s32 smartPlug_bdbNetworkSteerStart(void *arg)
     return -1;
 }
 
-void smartPlug_classicJoinStart(void)
+void relay2_classicJoinStart(void)
 {
     printf("start classic Join\n");
 
     u16 jitter = 1 + zb_random() % 0x0fff;
 
     if (!steerTimerEvt) {
-        steerTimerEvt = TL_ZB_TIMER_SCHEDULE(smartPlug_bdbNetworkSteerStart, NULL, jitter);
+        steerTimerEvt = TL_ZB_TIMER_SCHEDULE(relay2_bdbNetworkSteerStart, NULL, jitter);
         steerRetry = (steerTimerEvt == NULL);
     }
 }
 
-static s32 smartPlug_rejoinBackoff(void *arg)
+static s32 relay2_rejoinBackoff(void *arg)
 {
     (void)arg;
     static bool rejoinMode = REJOIN_SECURITY;
@@ -125,24 +125,24 @@ static s32 smartPlug_rejoinBackoff(void *arg)
     return 0;
 }
 
-void smartPlug_rejoinTimerStart(void)
+void relay2_rejoinTimerStart(void)
 {
     printf("start rejoin timer\n");
 
     if (!rejoinBackoffTimerEvt) {
-        rejoinBackoffTimerEvt = TL_ZB_TIMER_SCHEDULE(smartPlug_rejoinBackoff, NULL, 60 * 1000);
+        rejoinBackoffTimerEvt = TL_ZB_TIMER_SCHEDULE(relay2_rejoinBackoff, NULL, 60 * 1000);
         rejoinRetry = (rejoinBackoffTimerEvt == NULL);
     }
 }
 
-void smartPlug_networkTask(void)
+void relay2_networkTask(void)
 {
     if (!clock_time_exceed(retryStarted, 1000000UL)) {
         return;
     }
     retryStarted = clock_time();
-    if (steerRetry) smartPlug_classicJoinStart();
-    if (rejoinRetry) smartPlug_rejoinTimerStart();
+    if (steerRetry) relay2_classicJoinStart();
+    if (rejoinRetry) relay2_rejoinTimerStart();
 }
 
 /*********************************************************************
@@ -167,7 +167,7 @@ void zbdemo_bdbInitCb(u8 status, u8 joinedNetwork)
 #endif
         } else {
 #if (!ZBHCI_EN)
-            smartPlug_classicJoinStart();
+            relay2_classicJoinStart();
 #endif
         }
     }
@@ -205,7 +205,7 @@ void zbdemo_bdbCommissioningCb(u8 status, void *arg)
     case BDB_COMMISSION_STA_NO_NETWORK:
     case BDB_COMMISSION_STA_TCLK_EX_FAILURE:
     case BDB_COMMISSION_STA_TARGET_FAILURE:
-        smartPlug_classicJoinStart();
+        relay2_classicJoinStart();
         break;
     case BDB_COMMISSION_STA_FORMATION_FAILURE:
         break;
@@ -219,7 +219,7 @@ void zbdemo_bdbCommissioningCb(u8 status, void *arg)
         break;
     case BDB_COMMISSION_STA_REJOIN_FAILURE:
     case BDB_LOSS_CONNECTIVITY:
-        smartPlug_rejoinTimerStart();
+        relay2_rejoinTimerStart();
         break;
     case BDB_COMMISSION_STA_FORMATION_DONE:
 #ifndef ZBHCI_EN
@@ -233,11 +233,11 @@ void zbdemo_bdbCommissioningCb(u8 status, void *arg)
 
 void zbdemo_bdbIdentifyCb(u8 endpoint, u16 srcAddr, u16 identifyTime)
 {
-    smartPlug_zclIdentifyCmdHandler(endpoint, srcAddr, identifyTime);
+    relay2_zclIdentifyCmdHandler(endpoint, srcAddr, identifyTime);
 }
 
 #ifdef ZCL_OTA
-void smartPlug_otaProcessMsgHandler(u8 evt, u8 status)
+void relay2_otaProcessMsgHandler(u8 evt, u8 status)
 {
     if (evt == OTA_EVT_COMPLETE) {
         if (status == ZCL_STA_SUCCESS) {
@@ -249,7 +249,7 @@ void smartPlug_otaProcessMsgHandler(u8 evt, u8 status)
 }
 #endif
 
-static s32 smartPlug_softReset(void *arg)
+static s32 relay2_softReset(void *arg)
 {
     (void)arg;
     SYSTEM_RESET();
@@ -258,7 +258,7 @@ static s32 smartPlug_softReset(void *arg)
 }
 
 /*********************************************************************
- * @fn      smartPlug_leaveCnfHandler
+ * @fn      relay2_leaveCnfHandler
  *
  * @brief   Handler for ZDO Leave Confirm message.
  *
@@ -266,20 +266,20 @@ static s32 smartPlug_softReset(void *arg)
  *
  * @return  None
  */
-void smartPlug_leaveCnfHandler(nlme_leave_cnf_t *pLeaveCnf)
+void relay2_leaveCnfHandler(nlme_leave_cnf_t *pLeaveCnf)
 {
     if (pLeaveCnf->status == SUCCESS) {
         statusLed_blinkStart(3, 200, 200);
 
         //waiting blink over
-        if (!TL_ZB_TIMER_SCHEDULE(smartPlug_softReset, NULL, 2 * 1000)) {
-            smartPlug_softReset(NULL);
+        if (!TL_ZB_TIMER_SCHEDULE(relay2_softReset, NULL, 2 * 1000)) {
+            relay2_softReset(NULL);
         }
     }
 }
 
 /*********************************************************************
- * @fn      smartPlug_leaveIndHandler
+ * @fn      relay2_leaveIndHandler
  *
  * @brief   Handler for ZDO leave indication message.
  *
@@ -287,19 +287,19 @@ void smartPlug_leaveCnfHandler(nlme_leave_cnf_t *pLeaveCnf)
  *
  * @return  None
  */
-void smartPlug_leaveIndHandler(nlme_leave_ind_t *pLeaveInd)
+void relay2_leaveIndHandler(nlme_leave_ind_t *pLeaveInd)
 {
     (void)pLeaveInd;
 }
 
-bool smartPlug_panidConflictIndicateHandler(u16 newPanId)
+bool relay2_panidConflictIndicateHandler(u16 newPanId)
 {
     (void)newPanId;
     return FALSE;
 }
 
 /*********************************************************************
- * @fn      smartPlug_nwkStatusIndHandler
+ * @fn      relay2_nwkStatusIndHandler
  *
  * @brief   Handler for NWK status indication message.
  *
@@ -307,7 +307,7 @@ bool smartPlug_panidConflictIndicateHandler(u16 newPanId)
  *
  * @return  None
  */
-void smartPlug_nwkStatusIndHandler(zdo_nwk_status_ind_t *pNwkStatusInd)
+void relay2_nwkStatusIndHandler(zdo_nwk_status_ind_t *pNwkStatusInd)
 {
     printf("nwkStatusIndHandler: addr = %x, status = %x\n", pNwkStatusInd->shortAddr, pNwkStatusInd->status);
 
@@ -321,4 +321,4 @@ void smartPlug_nwkStatusIndHandler(zdo_nwk_status_ind_t *pNwkStatusInd)
     }
 }
 
-#endif  /* __PROJECT_TL_SMART_PLUG__ */
+#endif  /* __PROJECT_TL_RELAY_2CH__ */

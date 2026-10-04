@@ -1,288 +1,123 @@
-/********************************************************************************************************
- * @file    zcl_on_off.c
- *
- * @brief   Relay commands for the On/Off cluster.
- *
- * @author  Zigbee Group
- * @date    2021
- *
- * @par     Copyright (c) 2021, Telink Semiconductor (Shanghai) Co., Ltd. ("TELINK")
- *          All rights reserved.
- *
- *          Licensed under the Apache License, Version 2.0 (the "License");
- *          you may not use this file except in compliance with the License.
- *          You may obtain a copy of the License at
- *
- *              http://www.apache.org/licenses/LICENSE-2.0
- *
- *          Unless required by applicable law or agreed to in writing, software
- *          distributed under the License is distributed on an "AS IS" BASIS,
- *          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *          See the License for the specific language governing permissions and
- *          limitations under the License.
- *
- *******************************************************************************************************/
 #include "app_cfg.h"
-
-#if (__PROJECT_TL_SMART_PLUG__)
-
-/**********************************************************************
- * INCLUDES
- */
+#if (__PROJECT_TL_RELAY_2CH__)
 #include "tl_common.h"
 #include "zb_api.h"
 #include "zcl_include.h"
 #include "app_main.h"
-#include "plug_control.h"
-#include "smart_plug.h"
+#include "relay_control.h"
+#include "relay_2ch.h"
 
-/**********************************************************************
- * LOCAL CONSTANTS
- */
-#define ZCL_ONOFF_TIMER_INTERVAL        100 //the timer interval to change the offWaitTime/onTime attribute of the ONOFF cluster
+static ev_timer_event_t *timedOff[2];
+static u8 timerChannels[2] = {0, 1};
 
-/**********************************************************************
- * LOCAL VARIABLES
- */
-static ev_timer_event_t *onWithTimedOffTimerEvt = NULL;
-
-/**********************************************************************
- * FUNCTIONS
- */
-
-/*********************************************************************
- * @fn      smartPlug_onOffInit
- *
- * @brief
- *
- * @param   None
- *
- * @return  None
- */
-void smartPlug_onOffInit(void)
+void relay2_onOffInit(void)
 {
-    zcl_onOffAttr_t *pOnOff = zcl_onoffAttrGet();
-    /* zcl_onOff_register() has already applied StartUpOnOff exactly once. */
-    relay_set(pOnOff->onOff);
-    zcl_onOffAttr_save();
+    /* Registration applies StartUpOnOff once, separately for each endpoint. */
+    for (u8 ch = 0; ch < 2; ch++) relay_set(ch, g_zcl_onOffAttrs[ch].onOff);
+    relay2_saveState();
 }
 
-/*********************************************************************
- * @fn      smartPlug_onOffUpdate
- *
- * @brief
- *
- * @param   ZCL_CMD_ONOFF_ON / ZCL_ONOFF_STATUS_OFF / ZCL_CMD_ONOFF_TOGGLE
- *
- * @return  None
- */
-void smartPlug_onOffUpdate(u8 cmd)
+void relay2_onOffUpdate(u8 ch, u8 cmd)
 {
-    zcl_onOffAttr_t *pOnOff = zcl_onoffAttrGet();
-    bool previous = pOnOff->onOff;
-    bool onOff = ZCL_ONOFF_STATUS_ON;
-
-    if (gSmartPlugCtx.factoryResetPending && (cmd != ZCL_CMD_ONOFF_OFF)) {
-        return;
-    }
-
-    if (cmd == ZCL_CMD_ONOFF_ON) {
-        onOff = ZCL_ONOFF_STATUS_ON;
-    } else if (cmd == ZCL_CMD_ONOFF_OFF) {
-        onOff = ZCL_ONOFF_STATUS_OFF;
-    } else if (cmd == ZCL_CMD_ONOFF_TOGGLE) {
-        onOff = (pOnOff->onOff == ZCL_ONOFF_STATUS_ON) ? ZCL_ONOFF_STATUS_OFF
-                                                       : ZCL_ONOFF_STATUS_ON;
+    if (ch >= 2 || (gRelayCtx.factoryResetPending && cmd != ZCL_CMD_ONOFF_OFF)) return;
+    zcl_onOffAttr_t *attr = zcl_onoffAttrGet(ch);
+    bool previous = attr->onOff;
+    if (cmd == ZCL_CMD_ONOFF_ON) attr->onOff = TRUE;
+    else if (cmd == ZCL_CMD_ONOFF_OFF) attr->onOff = FALSE;
+    else if (cmd == ZCL_CMD_ONOFF_TOGGLE) attr->onOff = !attr->onOff;
+    else return;
+    if (attr->onOff) {
+        attr->globalSceneControl = TRUE;
+        if (!attr->onTime) attr->offWaitTime = 0;
     } else {
-        return;
+        attr->onTime = 0;
     }
-
-    //update attributes
-    if (onOff == ZCL_ONOFF_STATUS_ON) {
-        pOnOff->globalSceneControl = TRUE;
-        pOnOff->onOff = ZCL_ONOFF_STATUS_ON;
-        if (pOnOff->onTime == 0) {
-            pOnOff->offWaitTime = 0;
-        }
-    } else {
-        pOnOff->onOff = ZCL_ONOFF_STATUS_OFF;
-        pOnOff->onTime = 0;
-    }
-
 #ifdef ZCL_SCENE
-    zcl_sceneAttr_t *pScene = zcl_sceneAttrGet();
-    pScene->sceneValid = 0;
+    zcl_sceneAttrGet(ch)->sceneValid = FALSE;
 #endif
+    relay_set(ch, attr->onOff);
+    if (previous != attr->onOff) relay2_onRelayStateChanged(ch);
+    relay2_onOffTimerSync(ch);
+}
 
-    relay_set(pOnOff->onOff);
-    if (previous != pOnOff->onOff) {
-        zcl_onOffAttr_save();
-        smartPlug_onRelayStateChanged(pOnOff->onOff);
+void relay2_cancelTimedOff(void)
+{
+    for (u8 ch = 0; ch < 2; ch++) {
+        if (timedOff[ch]) TL_ZB_TIMER_CANCEL(&timedOff[ch]);
+        g_zcl_onOffAttrs[ch].onTime = g_zcl_onOffAttrs[ch].offWaitTime = 0;
     }
 }
 
-/*********************************************************************
- * @fn      smartPlug_onWithTimedOffTimerCb
- *
- * @brief   timer event to process the ON_WITH_TIMED_OFF command
- *
- * @param   arg
- *
- * @return  0: timer continue on; -1: timer will be canceled
- */
-static s32 smartPlug_onWithTimedOffTimerCb(void *arg)
+static s32 timedOffCb(void *arg)
 {
-    (void)arg;
-    zcl_onOffAttr_t *pOnOff = zcl_onoffAttrGet();
+    u8 ch = *(u8 *)arg;
+    zcl_onOffAttr_t *attr = zcl_onoffAttrGet(ch);
+    if (attr->onOff && attr->onTime && attr->onTime != 0xFFFF) {
+        if (!--attr->onTime) relay2_onOffUpdate(ch, ZCL_CMD_ONOFF_OFF);
+    } else if (!attr->onOff && attr->offWaitTime && attr->offWaitTime != 0xFFFF) {
+        --attr->offWaitTime;
+    }
+    if ((attr->onOff && attr->onTime && attr->onTime != 0xFFFF) ||
+        (!attr->onOff && attr->offWaitTime && attr->offWaitTime != 0xFFFF)) return 0;
+    timedOff[ch] = NULL;
+    return -1;
+}
 
-    if ((pOnOff->onOff == ZCL_ONOFF_STATUS_ON) && pOnOff->onTime &&
-        (pOnOff->onTime != 0xFFFF)) {
-        pOnOff->onTime--;
-        if (pOnOff->onTime <= 0) {
-            smartPlug_onOffUpdate(ZCL_CMD_ONOFF_OFF);
-        }
-    } else if ((pOnOff->onOff == ZCL_ONOFF_STATUS_OFF) && pOnOff->offWaitTime &&
-               (pOnOff->offWaitTime != 0xFFFF)) {
-        pOnOff->offWaitTime--;
-        if (pOnOff->offWaitTime <= 0) {
-            onWithTimedOffTimerEvt = NULL;
-            return -1;
+void relay2_onOffTimerSync(u8 ch)
+{
+    if (ch >= 2 || gRelayCtx.factoryResetPending || timedOff[ch]) return;
+    zcl_onOffAttr_t *attr = zcl_onoffAttrGet(ch);
+    if ((attr->onOff && attr->onTime && attr->onTime != 0xFFFF) ||
+        (!attr->onOff && attr->offWaitTime && attr->offWaitTime != 0xFFFF)) {
+        timedOff[ch] = TL_ZB_TIMER_SCHEDULE(timedOffCb, &timerChannels[ch], 100);
+        if (!timedOff[ch]) {
+            /* Clear counters first: OFF must not recursively allocate a timer. */
+            attr->onTime = attr->offWaitTime = 0;
+            relay2_onOffUpdate(ch, ZCL_CMD_ONOFF_OFF);
         }
     }
+}
 
-    if (pOnOff->onTime || pOnOff->offWaitTime) {
-        return 0;
+static void timedOffProcess(u8 ch, const zcl_onoff_onWithTimeOffCmd_t *cmd)
+{
+    zcl_onOffAttr_t *attr = zcl_onoffAttrGet(ch);
+    if (cmd->onOffCtrl.bits.acceptOnlyWhenOn && !attr->onOff) return;
+    if (timedOff[ch]) TL_ZB_TIMER_CANCEL(&timedOff[ch]);
+    if (attr->offWaitTime && !attr->onOff) {
+        attr->offWaitTime = min2(attr->offWaitTime, cmd->offWaitTime);
     } else {
-        onWithTimedOffTimerEvt = NULL;
-        return -1;
+        attr->onTime = max2(attr->onTime, cmd->onTime);
+        attr->offWaitTime = cmd->offWaitTime;
+        relay2_onOffUpdate(ch, ZCL_CMD_ONOFF_ON);
     }
+    relay2_onOffTimerSync(ch);
 }
 
-/*********************************************************************
- * @fn      smartPlug_onWithTimedOffTimerStart
- *
- * @brief   start the onWithTimedOff timer
- *
- * @param
- *
- * @return
- */
-static void smartPlug_onWithTimedOffTimerStart(void)
+status_t relay2_onOffCb(zclIncomingAddrInfo_t *address, u8 cmd, void *payload)
 {
-    if (onWithTimedOffTimerEvt) {
-        TL_ZB_TIMER_CANCEL(&onWithTimedOffTimerEvt);
+    int ch = relay2_channelFromEndpoint(address->dstEp);
+    if (ch < 0 || address->dirCluster != ZCL_FRAME_CLIENT_SERVER_DIR)
+        return ZCL_STA_UNSUP_CLUSTER_COMMAND;
+    switch (cmd) {
+    case ZCL_CMD_ONOFF_ON:
+    case ZCL_CMD_ONOFF_OFF:
+    case ZCL_CMD_ONOFF_TOGGLE:
+        relay2_onOffUpdate(ch, cmd);
+        break;
+    case ZCL_CMD_OFF_WITH_EFFECT:
+        g_zcl_onOffAttrs[ch].globalSceneControl = FALSE;
+        relay2_onOffUpdate(ch, ZCL_CMD_ONOFF_OFF);
+        break;
+    case ZCL_CMD_ON_WITH_RECALL_GLOBAL_SCENE:
+        relay2_onOffUpdate(ch, ZCL_CMD_ONOFF_ON);
+        break;
+    case ZCL_CMD_ON_WITH_TIMED_OFF:
+        if (!payload) return ZCL_STA_UNSUP_CLUSTER_COMMAND;
+        timedOffProcess(ch, (const zcl_onoff_onWithTimeOffCmd_t *)payload);
+        break;
+    default:
+        return ZCL_STA_UNSUP_CLUSTER_COMMAND;
     }
-    onWithTimedOffTimerEvt = TL_ZB_TIMER_SCHEDULE(smartPlug_onWithTimedOffTimerCb, NULL, ZCL_ONOFF_TIMER_INTERVAL);
-    if (!onWithTimedOffTimerEvt) {
-        smartPlug_onOffUpdate(ZCL_CMD_ONOFF_OFF);
-        zcl_onoffAttrGet()->offWaitTime = 0;
-    }
+    return ZCL_STA_SUCCESS;
 }
-
-/*********************************************************************
- * @fn      smartPlug_onWithTimedOffProcess
- *
- * @brief
- *
- * @param   cmd
- *
- * @return  None
- */
-static void smartPlug_onWithTimedOffProcess(zcl_onoff_onWithTimeOffCmd_t *cmd)
-{
-    zcl_onOffAttr_t *pOnOff = zcl_onoffAttrGet();
-
-    if (cmd->onOffCtrl.bits.acceptOnlyWhenOn && (pOnOff->onOff == ZCL_ONOFF_STATUS_OFF)) {
-        return;
-    }
-
-    if (pOnOff->offWaitTime && (pOnOff->onOff == ZCL_ONOFF_STATUS_OFF)) {
-        pOnOff->offWaitTime = min2(pOnOff->offWaitTime, cmd->offWaitTime);
-    } else {
-        pOnOff->onTime = max2(pOnOff->onTime, cmd->onTime);
-        pOnOff->offWaitTime = cmd->offWaitTime;
-        smartPlug_onOffUpdate(ZCL_CMD_ONOFF_ON);
-    }
-
-    if ((pOnOff->onTime && pOnOff->onTime < 0xFFFF) ||
-        (pOnOff->offWaitTime && pOnOff->offWaitTime < 0xFFFF)) {
-            smartPlug_onWithTimedOffTimerStart();
-    }
-}
-
-/*********************************************************************
- * @fn      smartPlug_offWithEffectProcess
- *
- * @brief
- *
- * @param   cmd
- *
- * @return  None
- */
-static void smartPlug_offWithEffectProcess(zcl_onoff_offWithEffectCmd_t *cmd)
-{
-    zcl_onOffAttr_t *pOnOff = zcl_onoffAttrGet();
-    (void)cmd;
-    pOnOff->globalSceneControl = FALSE;
-
-    smartPlug_onOffUpdate(ZCL_CMD_ONOFF_OFF);
-}
-
-/*********************************************************************
- * @fn      smartPlug_onWithRecallGlobalSceneProcess
- *
- * @brief
- *
- * @param   cmd
- *
- * @return  None
- */
-static void smartPlug_onWithRecallGlobalSceneProcess(void)
-{
-    zcl_onOffAttr_t *pOnOff = zcl_onoffAttrGet();
-    pOnOff->globalSceneControl = TRUE;
-    smartPlug_onOffUpdate(ZCL_CMD_ONOFF_ON);
-}
-
-/*********************************************************************
- * @fn      smartPlug_onOffCb
- *
- * @brief   Handler for ZCL ONOFF command. This function will set ONOFF attribute first.
- *
- * @param	pAddrInfo
- * @param   cmdId - onoff cluster command id
- * @param	cmdPayload
- *
- * @return  status_t
- */
-status_t smartPlug_onOffCb(zclIncomingAddrInfo_t *pAddrInfo, u8 cmdId, void *cmdPayload)
-{
-    status_t status = ZCL_STA_SUCCESS;
-
-    if ((pAddrInfo->dstEp == SMART_PLUG_ENDPOINT) &&
-        (pAddrInfo->dirCluster == ZCL_FRAME_CLIENT_SERVER_DIR)) {
-        switch (cmdId) {
-        case ZCL_CMD_ONOFF_ON:
-        case ZCL_CMD_ONOFF_OFF:
-        case ZCL_CMD_ONOFF_TOGGLE:
-            smartPlug_onOffUpdate(cmdId);
-            break;
-        case ZCL_CMD_OFF_WITH_EFFECT:
-            smartPlug_offWithEffectProcess((zcl_onoff_offWithEffectCmd_t *)cmdPayload);
-            break;
-        case ZCL_CMD_ON_WITH_RECALL_GLOBAL_SCENE:
-            smartPlug_onWithRecallGlobalSceneProcess();
-            break;
-        case ZCL_CMD_ON_WITH_TIMED_OFF:
-            smartPlug_onWithTimedOffProcess((zcl_onoff_onWithTimeOffCmd_t *)cmdPayload);
-            break;
-        default:
-            status = ZCL_STA_UNSUP_CLUSTER_COMMAND;
-            break;
-        }
-    }
-
-    return status;
-}
-
-#endif  /* __PROJECT_TL_SMART_PLUG__ */
+#endif

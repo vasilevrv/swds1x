@@ -1,74 +1,31 @@
-# Zigbee2MQTT: Salu Workshop SWPLUG1x
+# Zigbee2MQTT — swrelay2x
 
-External ESM converter `smart_plug_hlw8032.mjs` for this firmware: `modelID=SWPLUG1x`, `manufacturerName=Salu Workshop`, endpoint 1. It also recognizes the older `SMART_PLUG_BL0937` and `SMART_PLUG_HLW8032` models with manufacturer `TELINK`. It is not intended for the board's factory Tuya firmware.
+Если настройка кнопки выдаёт `Status 'UNSUPPORTED_CLUSTER' relay2Config`, обновить внешний конвертер файлом из этого проекта и перезапустить Zigbee2MQTT. Эта ошибка может возникать при загрузке конвертера после выполнения start/configure: herdsman ещё не знает описание пользовательского кластера. Конвертер теперь регистрирует его перед каждым чтением и записью настроек. Перепрошивка для этого исправления не требуется.
 
-The filename is retained for compatibility with existing installations. Replace the installed converter instead of adding a second copy. After changing the firmware's model identity, refresh the device interview in Zigbee2MQTT.
+Добавить `relay_2ch.mjs` как внешний конвертер в Zigbee2MQTT и подключить устройство заново. Fingerprint: модель `swrelay2x`, производитель `Salu Workshop`. Инструкции загрузки внешних конвертеров: [официальная документация](https://www.zigbee2mqtt.io/advanced/more/external_converters.html).
 
-## Installation
+Конвертер предоставляет два независимых переключателя `state_l1`/`state_l2`, поведение после подачи питания `power_on_behavior_l1`/`power_on_behavior_l2`, четыре Boolean-настройки и шесть кнопочных `action`.
 
-1. Copy `smart_plug_hlw8032.mjs` into `external_converters` beside Zigbee2MQTT's `configuration.yaml`. In Docker this is usually `/app/data/external_converters` inside the container; use the corresponding mounted data directory on the host.
-2. Add this setting to the existing `advanced` section:
-
-   ```yaml
-   advanced:
-     enable_external_js: true
-   ```
-
-   Do not create a duplicate `advanced` section. Current Zigbee2MQTT does not require a separate YAML `external_converters` list.
-3. Restart Zigbee2MQTT. Alternatively, add the file contents through Settings → Dev console → External converters.
-4. Enable Permit join and hold the plug's button for ten seconds. This factory reset clears the network, accumulated energy and device settings. If the device is already joined with this firmware, try Reconfigure before resetting it.
-
-## Exposed properties
-
-| Property | Value |
-|---|---|
-| `state` | ON / OFF; SET also supports TOGGLE |
-| `power_on_behavior` | off / on / toggle / previous |
-| `voltage` | V, RMS averaged over the window |
-| `current` | A, RMS averaged over the window |
-| `power` | W, average active power with 1 W resolution |
-| `apparent_power` | VA, average apparent power |
-| `power_factor` | 0…1, ratio of average active to apparent power |
-| `energy` | kWh, accumulated until factory reset |
-| `telemetry_interval_ms` | Integer 100…3600000 ms; default 10000 |
-
-Unavailable measurements are published as `null` rather than large numeric values. Scaling matches the current firmware: V/10, A/1000, W/1 and energy/1000000. Update the converter if C attribute scaling changes.
-
-Energy is a cumulative counter and is not averaged. The interval defines the electrical-measurement aggregation window and the transmission period for both reports. At 100 ms, a window may contain no new HLW8032 frame.
-
-## MQTT
-
-Topic `zigbee2mqtt/PLUG_NAME/set`:
+MQTT topic `zigbee2mqtt/DEVICE/set`, примеры:
 
 ```json
-{"state":"ON"}
+{"state_l1":"ON","state_l2":"OFF"}
 ```
 
 ```json
-{"telemetry_interval_ms":10000}
+{"button_1_linked":false,"button_2_linked":true,"button_1_double_click":true,"button_2_double_click":false}
 ```
+
+Чтение: `zigbee2mqtt/DEVICE/get`:
 
 ```json
-{"power_on_behavior":"previous"}
+{"button_1_linked":"","button_2_double_click":""}
 ```
 
-Topic `zigbee2mqtt/PLUG_NAME/get`:
+Настройки сохраняются в flash. После записи конвертер читает атрибут обратно и публикует подтверждённое значение. `true`/`false` должны быть JSON Boolean, не строками и не числами.
 
-```json
-{"telemetry_interval_ms":"","energy":"","power":""}
-```
+События в `zigbee2mqtt/DEVICE`: `action` равен `button_1_single`, `button_1_double`, `button_1_hold`, `button_2_single`, `button_2_double` или `button_2_hold`. Двойные и длинные нажатия не переключают реле. Отключение связи кнопки с реле не отключает события. Для автоматизаций использовать action-события, включая повторные одинаковые действия.
 
-The firmware persists the interval. Converter Configure reads it rather than replacing the user's setting with the default. Configure Reporting is used only for On/Off. Firmware measurement attributes are read-only and sent by its own scheduler to coordinator endpoint 1; standard Configure Reporting does not apply to them.
+Стандартные On/Off-отчёты настраиваются и привязываются для обоих endpoint расширением `m.onOff`. Настройки `0xFC00` читаются на обоих endpoint. Кнопочные команды прошивка отправляет непосредственно координатору, endpoint 1; привязка для них не требуется.
 
-The converter enables `ota: true`. Upload this project's firmware as a custom file through Zigbee2MQTT; no public image server is configured. Building `.zigbee` images and uploading them is described in [OTA_UPDATE.md](../OTA_UPDATE.md), currently in Russian.
-
-The converter was prepared against the firmware sources and Zigbee2MQTT API. Host checks passed; loading it into a real Zigbee2MQTT instance and end-to-end board communication were not established by those checks.
-
-After updating the converter, restart Zigbee2MQTT and Reconfigure the device. Explicit `name` fields are defined for the custom cluster and attribute because herdsman uses them for routing and parsing Read Attributes Response. After SET, the converter returns the actual read-back interval.
-
-The attribute explicitly declares `read: true` and `write: true`. Without `write: true`, herdsman rejects SET locally with NOT_AUTHORIZED before transmitting a Zigbee request. Invalid values converted by herdsman to NaN/null are handled alongside the firmware's raw numeric invalid markers.
-
-References:
-
-- [External converters](https://www.zigbee2mqtt.io/advanced/more/external_converters.html)
-- [enable_external_js](https://www.zigbee2mqtt.io/guide/configuration/all-settings.html#enable_external_js)
+Проверено с `zigbee-herdsman-converters 26.108.1`: обработчики с подменой транспорта, загрузка/валидация настоящего внешнего конвертера и декодирование событий настоящим herdsman. Координатор и радио в проверках не участвовали.

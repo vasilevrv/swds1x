@@ -26,30 +26,13 @@
 
 #include "comm_cfg.h"
 
-#if defined(MCU_CORE_8258)
-    #define CHIP_TYPE                   TLSR_8258_1M
-    #define FLASH_CAP_SIZE_1M           1
-#elif defined(MCU_CORE_8278)
-    #define CHIP_TYPE                   TLSR_8278
-    #define FLASH_CAP_SIZE_1M           1
-#elif defined(MCU_CORE_B91)
-    #define CHIP_TYPE                   TLSR_B91
-    #define FLASH_CAP_SIZE_1M           1
-#elif defined(MCU_CORE_TL721X)
-    #define CHIP_TYPE                   TLSR_TL721X
-    #define FLASH_CAP_SIZE_1M           1
-#elif defined(MCU_CORE_TL321X)
-    #define CHIP_TYPE                   TLSR_TL321X
-    #define FLASH_CAP_SIZE_1M           1
-#elif defined(MCU_CORE_TL323X)
-    #define CHIP_TYPE                   TLSR_TL323X
-    #define FLASH_CAP_SIZE_1M           1
-#elif defined(MCU_CORE_TL521X)
-    #define CHIP_TYPE                   TLSR_TL521X
-    #define FLASH_CAP_SIZE_1M           1
+#if !defined(MCU_CORE_8258)
+#error "swrelay2x supports TLSR8258 only"
 #endif
+#define CHIP_TYPE                       TLSR_8258_1M
+#define FLASH_CAP_SIZE_1M               1
 
-#define APP_RELEASE                     0x10//app release 1.0
+#define APP_RELEASE                     0x11//app release 1.1
 #define APP_BUILD                       0x04//app build 04
 #define STACK_RELEASE                   0x40//stack release 4.0
 #define STACK_BUILD                     0x01//stack build 01
@@ -59,7 +42,8 @@
  * Refer to ZCL OTA specification for details.
  */
 #define MANUFACTURER_CODE               MANUFACTURER_CODE_TELINK//Telink ID
-#define IMAGE_TYPE                      ((CHIP_TYPE << 8) | IMAGE_TYPE_DEVICE | (IMAGE_TYPE_BOOT_FLAG << 7))
+#define RELAY_IMAGE_TYPE_DEVICE         0x53
+#define IMAGE_TYPE                      ((CHIP_TYPE << 8) | RELAY_IMAGE_TYPE_DEVICE | (IMAGE_TYPE_BOOT_FLAG << 7))
 #define	FILE_VERSION                    ((APP_RELEASE << 24) | (APP_BUILD << 16) | (STACK_RELEASE << 8) | STACK_BUILD)
 
 /* Pre-compiled link configuration. */

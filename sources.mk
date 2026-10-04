@@ -1,13 +1,13 @@
 # Application sources only. Do not compile the original sampleLight app alongside these.
-# SMART_PLUG_DIR must point to this directory; append SMART_PLUG_SOURCES to your SDK source list.
-SMART_PLUG_DIR ?= $(dir $(lastword $(MAKEFILE_LIST)))
-SMART_PLUG_SOURCES := $(addprefix $(SMART_PLUG_DIR)/, \
+# RELAY_2CH_DIR must point to this directory; append RELAY_2CH_SOURCES to your SDK source list.
+RELAY_2CH_DIR ?= $(dir $(lastword $(MAKEFILE_LIST)))
+RELAY_2CH_SOURCES := $(addprefix $(RELAY_2CH_DIR)/, \
     app_main.c \
     app_ui.c \
-    plug_control.c \
-    hlw8032.c \
-    bl0937.c \
-    smart_plug.c \
+    relay_control.c \
+    relay_2ch.c \
+    button_engine.c \
+    board_io.c \
     zcl_clusters.c \
     zcl_callbacks.c \
     zcl_guard.c \

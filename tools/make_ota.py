@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Wrap this project's application BIN in an unencrypted Zigbee OTA container.
 
-Read OTA identity from the matching raw BIN: prepare_firmware overwrites part
-of the raw version field with CRC markers. Never wrap the combined factory BIN.
+Read OTA identity from the matching raw BIN. TLSR8258's startup header begins
+with a two-byte TJ instruction, followed by the four-byte version at 0x02.
+Never wrap the combined factory BIN.
 """
 import argparse
 from pathlib import Path
@@ -19,17 +20,17 @@ def package(raw: bytes, prepared: bytes) -> bytes:
         raise ValueError("Raw and prepared application BINs do not match")
     if struct.unpack_from("<H", prepared, 0x0C)[0] * 16 > 0x4000:
         raise ValueError("Application RAM code exceeds bootloader reservation")
-    version = struct.unpack_from("<I", raw, 4)[0]
+    version = struct.unpack_from("<I", raw, 2)[0]
     manufacturer, image_type = struct.unpack_from("<HH", raw, 0x12)
-    if manufacturer != 0x1141 or image_type != 0x03D2:
-        raise ValueError("Expected TLSR8258 1M bootloader-mode application (1141/03D2)")
+    if manufacturer != 0x1141 or image_type != 0x03D3:
+        raise ValueError("Expected TLSR8258 1M bootloader-mode application (1141/03D3)")
     total = 56 + 6 + len(prepared)
     # SDK checks the complete advertised OTA image size against this limit.
     if total > APP_SLOT_SIZE:
         raise ValueError("OTA container exceeds SDK OTA image size limit")
     header = struct.pack("<IHHHHHIH32sI", 0x0BEEF11E, 0x0100, 56, 0,
                          manufacturer, image_type, version, 2,
-                         b"Salu Workshop SWPLUG1x".ljust(32, b"\0"), total)
+                         b"Salu Workshop swrelay2x".ljust(32, b"\0"), total)
     return header + struct.pack("<HI", 0, len(prepared)) + prepared
 
 

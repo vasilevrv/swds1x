@@ -26,6 +26,7 @@
 
 #include "tl_common.h"
 #include "bootloader.h"
+#include "board_io.h"
 
 /* FLASH address */
 #define APP_RUNNING_ADDR                    APP_IMAGE_ADDR
@@ -594,9 +595,9 @@ void bootloader_keyPressProc(void)
 
 void bootloader_init(bool isBoot)
 {
+    board_io_init();
     if (isBoot) {
-        drv_gpio_write(LED_POWER, 1);
-        drv_gpio_write(LED_PERMIT, 1);
+        drv_gpio_write(LED_POWER, LED_OFF);
 
 #if MODULE_UART_ENABLE
         UART_PIN_CFG();
@@ -626,7 +627,6 @@ void bootloader_loop(void)
     if (noAppFlg) {
         for (u8 i = 0; i < 10; i++) {
             gpio_toggle(LED_POWER);
-            gpio_toggle(LED_PERMIT);
             WaitMs(100);
         }
 #if PM_ENABLE

@@ -1,9 +1,9 @@
 #include "app_cfg.h"
-#if (__PROJECT_TL_SMART_PLUG__)
+#if (__PROJECT_TL_RELAY_2CH__)
 #include "tl_common.h"
 #include "zb_api.h"
 #include "zcl_include.h"
-#include "smart_plug.h"
+#include "relay_2ch.h"
 #include "app_main.h"
 
 /* Validate wire data before the SDK parsers, which assume complete payloads. */
@@ -91,7 +91,7 @@ static bool scenePayload(const u8 *data, u16 length)
     return TRUE;
 }
 
-bool smartPlug_zclPacketValid(u16 cluster, const u8 *frame, u16 length)
+bool relay2_zclPacketValid(u16 cluster, const u8 *frame, u16 length)
 {
     if (length < 3) return FALSE;
     u8 headerSize = (frame[0] & 4) ? 5 : 3;
@@ -155,15 +155,15 @@ bool smartPlug_zclPacketValid(u16 cluster, const u8 *frame, u16 length)
         if (command == 3 || command == 6) return length == 2;
         if (command == 5) return length == 3 || length == 5;
         return command == 0x42 && length == 7;
-    default: return FALSE; /* Metering/config/profile commands are not implemented. */
+    default: return FALSE; /* Config/profile commands are not implemented. */
     }
 }
 
-void smartPlug_zclRxHandler(void *data)
+void relay2_zclRxHandler(void *data)
 {
     apsdeDataInd_t *message = (apsdeDataInd_t *)data;
-    if (!gSmartPlugCtx.factoryResetPending &&
-        smartPlug_zclPacketValid(message->indInfo.cluster_id, message->asdu, message->asduLen)) {
+    if (!gRelayCtx.factoryResetPending &&
+        relay2_zclPacketValid(message->indInfo.cluster_id, message->asdu, message->asduLen)) {
         zcl_rx_handler(data);
         return;
     }

@@ -23,15 +23,9 @@
  *
  *******************************************************************************************************/
 #pragma once
-#include "meter_config.h"
 
-/* The application has its own target symbol; legacy SDK targets still work. */
-#ifndef __PROJECT_TL_SMART_PLUG__
-#if (__PROJECT_TL_DIMMABLE_LIGHT__)
-#define __PROJECT_TL_SMART_PLUG__ 1
-#else
-#define __PROJECT_TL_SMART_PLUG__ 0
-#endif
+#ifndef __PROJECT_TL_RELAY_2CH__
+#define __PROJECT_TL_RELAY_2CH__ 0
 #endif
 
 /* Enable C linkage for C++ Compilers: */
@@ -89,8 +83,8 @@ extern "C" {
 #define MODULE_WATCHDOG_ENABLE                  0
 
 /* UART module */
-/* BL0937 uses GPIO pulses; hardware UART is enabled only for HLW8032. */
-#define MODULE_UART_ENABLE (SMART_PLUG_METER_TYPE == SMART_PLUG_METER_HLW8032)
+/* No metering UART or UART update protocol. */
+#define MODULE_UART_ENABLE 0
 
 /* Console module */
 #if (GSUART_PRINTF_MODE || UART_PRINTF_MODE || USB_PRINTF_MODE)
@@ -110,14 +104,14 @@ extern "C" {
  * Board definitions
  */
 /* Board ID */
-#define BOARD_SMART_PLUG_8258                   18
+#define BOARD_RELAY_2CH_8258                   18
 
 /* Board define */
 #if defined(MCU_CORE_8258)
-    #define BOARD                               BOARD_SMART_PLUG_8258
+    #define BOARD                               BOARD_RELAY_2CH_8258
     #define CLOCK_SYS_CLOCK_HZ                  48000000
 #else
-    #error "smart_plug supports TLSR8258 only"
+    #error "relay_2ch supports TLSR8258 only"
 #endif
 
 /**********************************************************************
@@ -128,8 +122,8 @@ extern "C" {
 /**********************************************************************
  * Board configuration
  */
-#if (BOARD == BOARD_SMART_PLUG_8258)
-    #include "board_smart_plug_8258.h"
+#if (BOARD == BOARD_RELAY_2CH_8258)
+    #include "board_relay_2ch_8258.h"
 #endif
 
 /**********************************************************************
@@ -143,8 +137,8 @@ extern "C" {
 #define ZCL_ON_OFF_SUPPORT                      1
 #define ZCL_GROUP_SUPPORT                       1
 #define ZCL_SCENE_SUPPORT                       1
-#define ZCL_ELECTRICAL_MEASUREMENT_SUPPORT      1
-#define ZCL_METERING_SUPPORT                    1
+#define ZCL_ELECTRICAL_MEASUREMENT_SUPPORT      0
+#define ZCL_METERING_SUPPORT                    0
 #define ZCL_OTA_SUPPORT                         1
 #define ZCL_GP_SUPPORT                          0
 #define ZCL_WWAH_SUPPORT                        0
