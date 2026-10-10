@@ -1,72 +1,58 @@
-# Сборка и прошивка swrelay2x
+# Building and initially flashing swds1x
 
-Команды выполнять из директории репозитория `swrelay2x`. Аппаратная цель: TLSR8258, flash 1 MiB. Полная распиновка задана в [relay_pins.h](relay_pins.h), для контроля питания выбран неподключённый PC5 по указанию пользователя. Сборка разрешена; тесты используют эту же конфигурацию GPIO.
-
-## Проверки и сборка
-
-Нужны Python 3, Clang и Node.js для тестов, GNU Make и TC32 toolchain для прошивки. SDK по умолчанию находится в `../telink_zigbee_sdk/tl_zigbee_sdk`; для другой директории добавить `SDK_DIR=/absolute/path/to/tl_zigbee_sdk`. Использованный SDK commit: `7cf1d6dbac6497505d649bd03342efe81f1a8212`.
+Target: TLSR8258F512ET32, **512 KiB internal flash**, bootloader mode 1. Use Telink TC32 GCC; ARM and RISC-V GCC are incompatible.
 
 ```sh
-make check
 make -j4 combined TOOLCHAIN_PREFIX=/path/to/bin/tc32-elf-
 make -j4 ota TOOLCHAIN_PREFIX=/path/to/bin/tc32-elf-
 ```
 
-Если `tc32-elf-gcc`, `tc32-elf-ld`, `tc32-elf-objcopy`, `tc32-elf-size` доступны в PATH, убрать `TOOLCHAIN_PREFIX`. ARM/RISC-V GCC и Clang не создают TC32-прошивку. Режим загрузчика `BOOT_LOADER_MODE=1` обязателен для выбранной цели.
+The default SDK location is `../telink_zigbee_sdk/tl_zigbee_sdk`. Override it with `SDK_DIR=/absolute/path/to/tl_zigbee_sdk`. If TC32 is in PATH, omit `TOOLCHAIN_PREFIX`.
 
-Результаты:
+Outputs: `build/swds1x_factory.bin`, `build/bootloader/bootloader.bin`, `build/boot1/swds1x.bin` and `build/boot1/swds1x.zigbee`. The application slot is 0x26000 bytes at address 0x10000. Packaging checks size, headers, alignment and CRC. The application linker checks the TLSR8258 retention RAM boundary.
 
-- `build/relay_2ch_factory.bin` — загрузчик + приложение, адрес записи **0x00000**.
-- `build/bootloader/bootloader.bin` — только загрузчик, **0x00000**.
-- `build/boot1/relay_2ch.bin` — только приложение, **0x10000**, нужен совместимый загрузчик.
-- `build/boot1/relay_2ch.raw.bin`, `.elf`, `.map` — вспомогательные артефакты.
-- `build/boot1/relay_2ch.zigbee` — OTA-контейнер, не файл для записи BDT.
+## TLSR8258F512 flash layout
 
-Приложение занимает слот до 424 KiB. Упаковщик проверяет размеры, добавляет выравнивание FF, заголовок и CRC SDK; объединение проверяет обе прошивки и размещает приложение по 0x10000. Загрузчик использует ту же конфигурацию GPIO и выключает оба реле перед проверкой/переносом OTA. UART update отключён.
+- Bootloader: `0x00000..0x0FFFF`.
+- Application: `0x10000..0x35FFF` (152 KiB).
+- OTA: `0x36000..0x5BFFF` (152 KiB).
+- Reserved/BLE NV: `0x5C000..0x5EFFF`.
+- Zigbee NV: `0x5F000..0x74FFF`; factory-reset marker: `0x75000`.
+- Factory MAC: `0x76000`; RF calibration: `0x77000`.
+- Pre-install code: `0x78000`; higher sectors are unused.
 
-## Telink BDT через Burning EVK/SWS
+The original SDK rejects B85/512K and stops a 1 MiB image on a 512 KiB chip. `tools/prepare_sdk512.py` creates a separate SDK copy with adapted checks and addresses. This is a project adaptation rather than an officially supported configuration of this SDK revision. Factory addresses follow the earlier Telink Zigbee 512K layout; verify them against the board's original dump.
 
-`/path/to/bdt` заменить на установленный BDT для macOS/Linux. Подключение: SWS платы к SWS адаптера, общий GND, питание по схеме платы/адаптера. Команды соответствуют [документации Telink BDT](https://doc.telink-semi.cn/doc/en/software/res/tools/bdt_linux_mac/bdt_linux_mac_en/); на устройстве в этой работе они не выполнялись. При нескольких EVK выбрать адаптер опциями `-b` и `-d`.
+Do not use the old 1 MiB BIN. Rebuild **both** images with `make combined`. The sensor uses a different OTA image type (`0x02D4`), so initial migration from a relay is performed through SWS.
 
-Проверить связь и сохранить исходный flash 1 MiB перед первой записью:
+## SWS programming
 
-```sh
-/path/to/bdt 8258 sws
-/path/to/bdt 8258 rf 0x0 -s 1048576 -o original_flash.bin
-```
+First back up the complete flash. Preserve factory MAC and RF calibration; a full-chip erase is not required.
 
-После успешного чтения сохранить `original_flash.bin` вне `build`. Первая установка загрузчика и приложения:
-
-```sh
-# Старый OTA не должен заменить новое приложение при первом запуске.
-/path/to/bdt 8258 wf 0x7A000 00 -s 1 -e
-/path/to/bdt 8258 wf 0x0 -i build/relay_2ch_factory.bin
-
-RELAY_IMAGE_SIZE=$(wc -c < build/relay_2ch_factory.bin | tr -d ' ')
-/path/to/bdt 8258 rf 0x0 -s "$RELAY_IMAGE_SIZE" -o programmed_readback.bin
-cmp build/relay_2ch_factory.bin programmed_readback.bin
-```
-
-После успешного выполнения всех команд и `cmp` с кодом 0:
+For TlsrComSwireWriter, run the following from its directory with your own port and image paths:
 
 ```sh
-/path/to/bdt 8258 reset
+SENSOR_PORT=/dev/tty.wchusbserial110
+SENSOR_IMAGE=/absolute/path/to/swds1x/build/swds1x_factory.bin
+python3 TLSR825xComFlasher-macos.py -p "$SENSOR_PORT" -b 460800 -t 70 rf 0x0 0x80000 original_flash.bin
 ```
 
-Не стирать всю flash: MAC/calibration и другие заводские данные находятся вне записываемого образа. После первой установки удерживать служебную кнопку 10 секунд для очистки сети/настроек старой прошивки, открыть подключение в Zigbee2MQTT и добавить устройство с новым конвертером.
-
-При последующих аппаратных обновлениях с нашим совместимым загрузчиком можно записывать только приложение:
+Continue after successfully reading the complete backup:
 
 ```sh
-/path/to/bdt 8258 wf 0x7A000 00 -s 1 -e
-/path/to/bdt 8258 wf 0x10000 -i build/boot1/relay_2ch.bin
-RELAY_APP_SIZE=$(wc -c < build/boot1/relay_2ch.bin | tr -d ' ')
-/path/to/bdt 8258 rf 0x10000 -s "$RELAY_APP_SIZE" -o app_readback.bin
-cmp build/boot1/relay_2ch.bin app_readback.bin
+python3 TLSR825xComFlasher-macos.py -p "$SENSOR_PORT" -b 460800 -t 70 es 0x36000 0x1000
+python3 TLSR825xComFlasher-macos.py -p "$SENSOR_PORT" -b 460800 -t 70 wf 0x0 "$SENSOR_IMAGE"
+SENSOR_SIZE=$(wc -c < "$SENSOR_IMAGE" | tr -d ' ')
+python3 TLSR825xComFlasher-macos.py -p "$SENSOR_PORT" -b 460800 -t 70 rf 0x0 "$SENSOR_SIZE" sensor_readback.bin
+cmp "$SENSOR_IMAGE" sensor_readback.bin
 ```
 
-Reset также выполнять только после успешного сравнения. Такой путь сохраняет настройки; заводской сброс при обычном обновлении не нужен.
+Erasing 0x36000 removes the OTA slot header so the bootloader cannot restore the previous application. After successful readback comparison, restart the device:
 
-## Что проверено
+```sh
+python3 TLSR825xComFlasher-macos.py -p "$SENSOR_PORT" -b 460800 -t 70 -r
+```
 
-`make check`: C-поведение с ASan/UBSan, wire-проверки/fuzzing, синтаксис полного набора C приложения и загрузчика по реальным SDK headers, упаковка BIN/OTA и конвертер. Проверка с настоящими herdsman-библиотеками описана в README. **TC32-компиляция/линковка, прошивка, радио и работа на физической плате остаются аппаратными этапами.**
+Install the Zigbee2MQTT external converter, enable permit join, then press and release D3 to reset old network settings. Check D7 opening/closing, the B4 LED, button reset, network recovery after a coordinator restart and sleep current. PC5 is used by the SDK for supply measurements and is not bonded out on ET32.
+
+`make check` runs host checks; it does not produce a TC32 BIN or program the device.

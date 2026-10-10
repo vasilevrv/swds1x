@@ -1,9 +1,8 @@
 #include "app_cfg.h"
-#if (__PROJECT_TL_RELAY_2CH__)
+#if (__PROJECT_TL_SWDS1X__)
 #include "tl_common.h"
 #include "zb_api.h"
 #include "zcl_include.h"
-#include "relay_2ch.h"
 #include "app_main.h"
 
 /* Validate wire data before the SDK parsers, which assume complete payloads. */
@@ -79,19 +78,7 @@ static bool reportingRecords(const u8 *data, u16 length)
     return TRUE;
 }
 
-static bool scenePayload(const u8 *data, u16 length)
-{
-    if (length < 6 || data[5] > length - 6) return FALSE;
-    u16 offset = 6 + data[5];
-    if (length - offset > ZCL_MAX_SCENE_EXT_FIELD_SIZE) return FALSE;
-    while (offset < length) {
-        if (length - offset < 3 || data[offset + 2] > length - offset - 3) return FALSE;
-        offset += 3 + data[offset + 2];
-    }
-    return TRUE;
-}
-
-bool relay2_zclPacketValid(u16 cluster, const u8 *frame, u16 length)
+bool sensor_zclPacketValid(u16 cluster, const u8 *frame, u16 length)
 {
     if (length < 3) return FALSE;
     u8 headerSize = (frame[0] & 4) ? 5 : 3;
@@ -140,30 +127,16 @@ bool relay2_zclPacketValid(u16 cluster, const u8 *frame, u16 length)
     switch (cluster) {
     case 0x0000: return command == 0 && length == 0;
     case 0x0003: return (command == 0 || command == 0x40) ? length == 2 : command == 1 && length == 0;
-    case 0x0006:
-        if (command <= 2 || command == 0x41) return length == 0;
-        if (command == 0x40) return length == 2;
-        return command == 0x42 && length == 5;
-    case 0x0004:
-        if (command == 0 || command == 5) return length >= 3 && length == (u16)(3 + data[2]);
-        if (command == 1 || command == 3) return length == 2;
-        if (command == 2) return length >= 1 && length == (u16)(1 + 2 * data[0]);
-        return command == 4 && length == 0;
-    case 0x0005:
-        if (command == 0 || command == 0x40) return scenePayload(data, length);
-        if (command == 1 || command == 2 || command == 4 || command == 0x41) return length == 3;
-        if (command == 3 || command == 6) return length == 2;
-        if (command == 5) return length == 3 || length == 5;
-        return command == 0x42 && length == 7;
+    case 0x0500: return command == 0 && length == 2;
     default: return FALSE; /* Config/profile commands are not implemented. */
     }
 }
 
-void relay2_zclRxHandler(void *data)
+void sensor_zclRxHandler(void *data)
 {
     apsdeDataInd_t *message = (apsdeDataInd_t *)data;
-    if (!gRelayCtx.factoryResetPending &&
-        relay2_zclPacketValid(message->indInfo.cluster_id, message->asdu, message->asduLen)) {
+    if (!gSensorCtx.factoryResetPending &&
+        sensor_zclPacketValid(message->indInfo.cluster_id, message->asdu, message->asduLen)) {
         zcl_rx_handler(data);
         return;
     }

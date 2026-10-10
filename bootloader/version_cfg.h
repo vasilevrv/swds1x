@@ -1,8 +1,8 @@
 #pragma once
 #include "comm_cfg.h"
 
-#define CHIP_TYPE                      TLSR_8258_1M
-#define FLASH_CAP_SIZE_1M              1
+#define CHIP_TYPE                      TLSR_8258_512K
+#define FLASH_CAP_SIZE_1M              0
 #define MANUFACTURER_CODE              MANUFACTURER_CODE_TELINK
 #define IMAGE_TYPE                     ((CHIP_TYPE << 8) | IMAGE_TYPE_BOOTLOADER)
 #define FILE_VERSION                   0x10014001

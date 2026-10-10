@@ -1,7 +1,7 @@
 /********************************************************************************************************
  * @file    app_main.c
  *
- * @brief   Two-channel relay application entry point.
+ * @brief   Door/window sensor application entry point.
  *
  * @author  Zigbee Group
  * @date    2021
@@ -24,7 +24,7 @@
  *******************************************************************************************************/
 #include "app_cfg.h"
 
-#if (__PROJECT_TL_RELAY_2CH__)
+#if (__PROJECT_TL_SWDS1X__)
 
 /**********************************************************************
  * INCLUDES
@@ -35,8 +35,9 @@
 #include "bdb.h"
 #include "ota.h"
 #include "app_main.h"
-#include "relay_control.h"
-#include "relay_2ch.h"
+#include "sensor_control.h"
+#include "battery.h"
+#include "sensor_engine.h"
 #include "board_io.h"
 #include "app_ui.h"
 #if ZBHCI_EN
@@ -47,23 +48,20 @@
  * LOCAL CONSTANTS
  */
 
-
 /**********************************************************************
  * TYPEDEFS
  */
 
-
 /**********************************************************************
  * GLOBAL VARIABLES
  */
-app_ctx_t gRelayCtx;
-
+app_ctx_t gSensorCtx;
 
 #ifdef ZCL_OTA
-extern ota_callBack_t relay2_otaCb;
+extern ota_callBack_t sensor_otaCb;
 
 //running code firmware information
-ota_preamble_t relay2_otaInfo = {
+ota_preamble_t sensor_otaInfo = {
     .fileVer          = FILE_VERSION,
     .imageType        = IMAGE_TYPE,
     .manufacturerCode = MANUFACTURER_CODE,
@@ -75,15 +73,15 @@ const zdo_appIndCb_t appCbLst = {
     bdb_zdoStartDevCnf,                 //start device cnf cb
     NULL,                               //reset cnf cb
     NULL,                               //device announce indication cb
-    relay2_leaveIndHandler,          //leave ind cb
-    relay2_leaveCnfHandler,          //leave cnf cb
-    relay2_panidConflictIndicateHandler,//nwk panid conflict ind cb
+    sensor_leaveIndHandler,          //leave ind cb
+    sensor_leaveCnfHandler,          //leave cnf cb
+    sensor_panidConflictIndicateHandler,//nwk panid conflict ind cb
     NULL,                               //permit join ind cb
     NULL,                               //nlme sync cnf cb
     NULL,                               //tc join ind cb
     NULL,                               //tc detects that the frame counter is near limit
     NULL,                               //end device negotiate cnf cb
-    relay2_nwkStatusIndHandler,      //nwk status ind cb
+    sensor_nwkStatusIndHandler,      //nwk status ind cb
 };
 
 /**
@@ -154,24 +152,16 @@ void user_app_init(void)
 
     /* Initialize ZCL layer */
     /* Register Incoming ZCL Foundation command/response messages */
-    zcl_init(relay2_zclProcessIncomingMsg);
+    zcl_init(sensor_zclProcessIncomingMsg);
 
-    /* Register endPoint */
-    for (u8 ch = 0; ch < RELAY_CHANNELS; ch++) {
-        af_endpointRegister(ch + 1, (af_simple_descriptor_t *)&g_relay2SimpleDesc[ch], relay2_zclRxHandler, NULL);
-    }
-    /* Initialize or restore attributes, this must before 'zcl_register()' */
-    zcl_relay2AttrsInit();
+    af_powerDescPowerModeUpdate(POWER_MODE_RECEIVER_COMES_PERIODICALLY);
+    af_endpointRegister(1, (af_simple_descriptor_t *)&sensor_simpleDesc, sensor_zclRxHandler, NULL);
+    sensor_attrsInit();
     zcl_reportingTabInit();
-
-    /* Register ZCL specific cluster information */
-    for (u8 ch = 0; ch < RELAY_CHANNELS; ch++) {
-        zcl_register(ch + 1, g_relay2ClusterCount, (zcl_specClusterInfo_t *)g_relay2ClusterList[ch]);
-    }
-
+    zcl_register(1, 4, (zcl_specClusterInfo_t *)sensor_clusterList);
 #if ZCL_OTA_SUPPORT
     /* Initialize OTA */
-    ota_init(OTA_TYPE_CLIENT, (af_simple_descriptor_t *)&g_relay2SimpleDesc[0], &relay2_otaInfo, &relay2_otaCb);
+    ota_init(OTA_TYPE_CLIENT, (af_simple_descriptor_t *)&sensor_simpleDesc, &sensor_otaInfo, &sensor_otaCb);
 #endif
 
 }
@@ -179,18 +169,16 @@ void user_app_init(void)
 void app_task(void)
 {
     app_key_handler();
-    if (gRelayCtx.factoryResetPending) {
-        return; /* Do not recreate application NV data while the stack resets. */
-    }
-    relay2_networkTask();
-    relay2_task();
-
-    if (BDB_STATE_GET() == BDB_STATE_IDLE) {
-        report_handler();
-    }
+    if (gSensorCtx.factoryResetPending) return;
+    sensor_batteryTask();
+    sensor_networkTask();
+    sensor_iasTask();
+    sensor_notifyTask();
+    if (BDB_STATE_GET() == BDB_STATE_IDLE) report_handler();
+    app_sleep();
 }
 
-static void relay2SysException(void)
+static void sensorSysException(void)
 {
     SYSTEM_RESET();
 }
@@ -206,17 +194,19 @@ static void relay2SysException(void)
  */
 void user_init(bool isRetention)
 {
-    (void)isRetention;
+    board_io_init();
+    if (isRetention) {
+        sensor_ledRestore();
+        app_clockResume();
+        mac_phyReconfig();
+        return;
+    }
 
     /* Register the system exception handler. */
-    sys_exceptHandlerRegister(relay2SysException);
+    sys_exceptHandlerRegister(sensorSysException);
 
-    /* Initialize the status LED and keep the relay inactive during startup. */
-    board_io_init();
+    /* Initialize the status LED and keep the LED inactive during startup. */
     led_init();
-
-    relay_init();
-
     /* Initialize Stack */
     stack_init();
 
@@ -224,9 +214,8 @@ void user_init(bool isRetention)
     user_app_init();
 
     app_buttons_init();
+    sensor_batteryInit();
 
-    /* Apply the restored relay state. */
-    relay_restore();
 
     /* User's Task */
 #if ZBHCI_EN
@@ -240,20 +229,14 @@ void user_init(bool isRetention)
     ev_on_poll(EV_POLL_IDLE, app_task);
 
     /* Read the pre-install code from NV */
-    if (bdb_preInstallCodeLoad(&gRelayCtx.tcLinkKey.keyType, gRelayCtx.tcLinkKey.key) == RET_OK) {
-        g_bdbCommissionSetting.linkKey.tcLinkKey.keyType = gRelayCtx.tcLinkKey.keyType;
-        g_bdbCommissionSetting.linkKey.tcLinkKey.key = gRelayCtx.tcLinkKey.key;
+    if (bdb_preInstallCodeLoad(&gSensorCtx.tcLinkKey.keyType, gSensorCtx.tcLinkKey.key) == RET_OK) {
+        g_bdbCommissionSetting.linkKey.tcLinkKey.keyType = gSensorCtx.tcLinkKey.keyType;
+        g_bdbCommissionSetting.linkKey.tcLinkKey.key = gSensorCtx.tcLinkKey.key;
     }
 
-    /* Set default reporting configuration */
-    u8 reportableChange[2] = {0x00, 0x00};
-    for (u8 ch = 0; ch < RELAY_CHANNELS; ch++) {
-        bdb_defaultReportingCfg(ch + 1, HA_PROFILE_ID,
-                                ZCL_CLUSTER_GEN_ON_OFF, ZCL_ATTRID_ONOFF,
-                                0, 120, (u8 *)&reportableChange);
-    }
     /* Initialize BDB */
-    bdb_init((af_simple_descriptor_t *)&g_relay2SimpleDesc[0], &g_bdbCommissionSetting, &g_zbDemoBdbCb, 1);
+    u8 repower = drv_pm_deepSleep_flag_get() ? 0 : 1;
+    bdb_init((af_simple_descriptor_t *)&sensor_simpleDesc, &g_bdbCommissionSetting, &g_zbDemoBdbCb, repower);
 }
 
-#endif  /* __PROJECT_TL_RELAY_2CH__ */
+#endif  /* __PROJECT_TL_SWDS1X__ */

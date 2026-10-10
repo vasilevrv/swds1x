@@ -1,4 +1,5 @@
 #include "host_sdk.h"
+static u32 app_nowMs(void) {return now_ticks / 16000U;}
 #define REJOIN_SECURITY 1
 #define BDB_STATE_IDLE 0
 typedef struct { s32 (*cb)(void *); } ev_timer_event_t;
@@ -28,13 +29,13 @@ static ev_timer_event_t *schedule(s32 (*cb)(void *),void *arg,u32 period) {
 #include "network_sources.inc"
 
 int main(void) {
-    timer_fail=true; relay2_classicJoinStart(); assert(steerRetry);
-    now_ticks+=1000001U*16; relay2_networkTask(); assert(steerRetry);
-    timer_fail=false; now_ticks+=1000001U*16; relay2_networkTask();
-    assert(!steerRetry && steerTimerEvt);
+    timer_fail=true; sensor_classicJoinStart(); assert(steerRetry && !sensor_networkCanSleep());
+    now_ticks+=1000001U*16; sensor_networkTask(); assert(steerRetry && !sensor_networkCanSleep());
+    timer_fail=false; now_ticks+=1000001U*16; sensor_networkTask();
+    assert(!steerRetry && steerTimerEvt && sensor_networkCanSleep());
     assert(timers[0].cb(NULL)==-1 && steering==1 && !steerTimerEvt);
-    factory_new=false; timer_fail=true; relay2_rejoinTimerStart(); assert(rejoinRetry);
-    timer_fail=false; now_ticks+=1000001U*16; relay2_networkTask();
+    factory_new=false; timer_fail=true; sensor_rejoinTimerStart(); assert(rejoinRetry);
+    timer_fail=false; now_ticks+=1000001U*16; sensor_networkTask();
     assert(!rejoinRetry && rejoinBackoffTimerEvt);
     bdb_state=1; assert(timers[1].cb(NULL)==0 && !rejoining);
     bdb_state=0; assert(timers[1].cb(NULL)==0 && rejoining==1);

@@ -24,8 +24,8 @@
  *******************************************************************************************************/
 #pragma once
 
-#ifndef __PROJECT_TL_RELAY_2CH__
-#define __PROJECT_TL_RELAY_2CH__ 0
+#ifndef __PROJECT_TL_SWDS1X__
+#define __PROJECT_TL_SWDS1X__ 0
 #endif
 
 /* Enable C linkage for C++ Compilers: */
@@ -41,6 +41,7 @@ extern "C" {
 #define TEST_FOR_CERTIFICATION                  0
 
 /* Radio */
+#define PM_ENABLE 1
 #define RF_ENABLE                               1
 #define PA_ENABLE                               0
 
@@ -104,14 +105,14 @@ extern "C" {
  * Board definitions
  */
 /* Board ID */
-#define BOARD_RELAY_2CH_8258                   18
+#define BOARD_SENSOR_8258                   18
 
 /* Board define */
 #if defined(MCU_CORE_8258)
-    #define BOARD                               BOARD_RELAY_2CH_8258
+    #define BOARD                               BOARD_SENSOR_8258
     #define CLOCK_SYS_CLOCK_HZ                  48000000
 #else
-    #error "relay_2ch supports TLSR8258 only"
+    #error "swds1x supports TLSR8258 only"
 #endif
 
 /**********************************************************************
@@ -122,8 +123,8 @@ extern "C" {
 /**********************************************************************
  * Board configuration
  */
-#if (BOARD == BOARD_RELAY_2CH_8258)
-    #include "board_relay_2ch_8258.h"
+#if (BOARD == BOARD_SENSOR_8258)
+    #include "board_sensor_8258.h"
 #endif
 
 /**********************************************************************
@@ -134,11 +135,14 @@ extern "C" {
 /**********************************************************************
  * ZCL cluster configuration
  */
-#define ZCL_ON_OFF_SUPPORT                      1
-#define ZCL_GROUP_SUPPORT                       1
-#define ZCL_SCENE_SUPPORT                       1
+#define ZCL_ON_OFF_SUPPORT 0
+#define ZCL_GROUP_SUPPORT 0
+#define ZCL_SCENE_SUPPORT 0
 #define ZCL_ELECTRICAL_MEASUREMENT_SUPPORT      0
 #define ZCL_METERING_SUPPORT                    0
+#define ZCL_IAS_ZONE_SUPPORT 1
+#define ZCL_POLL_CTRL_SUPPORT 0
+#define ZCL_POWER_CFG_SUPPORT 1
 #define ZCL_OTA_SUPPORT                         1
 #define ZCL_GP_SUPPORT                          0
 #define ZCL_WWAH_SUPPORT                        0

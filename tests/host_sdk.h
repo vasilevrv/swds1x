@@ -17,7 +17,7 @@ typedef int32_t s32;
 #define min2(a,b) ((a) < (b) ? (a) : (b))
 #define max2(a,b) ((a) > (b) ? (a) : (b))
 #define _attribute_packed_ __attribute__((packed))
-#define __PROJECT_TL_RELAY_2CH__ 1
+#define __PROJECT_TL_SWDS1X__ 1
 #define CLOCK_16M_SYS_TIMER_CLK_1US 16
 static u32 now_ticks;
 static u32 clock_time(void) { return now_ticks; }

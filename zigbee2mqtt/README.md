@@ -1,31 +1,30 @@
-# Zigbee2MQTT — swrelay2x
+# Zigbee2MQTT: Salu Workshop swds1x
 
-Если настройка кнопки выдаёт `Status 'UNSUPPORTED_CLUSTER' relay2Config`, обновить внешний конвертер файлом из этого проекта и перезапустить Zigbee2MQTT. Эта ошибка может возникать при загрузке конвертера после выполнения start/configure: herdsman ещё не знает описание пользовательского кластера. Конвертер теперь регистрирует его перед каждым чтением и записью настроек. Перепрошивка для этого исправления не требуется.
+Version 2026101006 removes ADC diagnostics. Update the converter, install the OTA image and restart Zigbee2MQTT. Battery measurement uses a five-second idle window at startup and then every 12 hours.
 
-Добавить `relay_2ch.mjs` как внешний конвертер в Zigbee2MQTT и подключить устройство заново. Fingerprint: модель `swrelay2x`, производитель `Salu Workshop`. Инструкции загрузки внешних конвертеров: [официальная документация](https://www.zigbee2mqtt.io/advanced/more/external_converters.html).
+The converter exposes `contact`, `battery` (%) and `voltage` (mV, with 100 mV resolution). Devices upgrading from a build without `genPowerCfg` need a new interview/configuration. If necessary, remove the old device entry, enable permit join and press/release D3 to pair again.
 
-Конвертер предоставляет два независимых переключателя `state_l1`/`state_l2`, поведение после подачи питания `power_on_behavior_l1`/`power_on_behavior_l2`, четыре Boolean-настройки и шесть кнопочных `action`.
+Firmware calculates the percentage using the approximate CR2032 curve described in the main README. The converter binds Power Configuration to the coordinator and reads both attributes. Firmware controls reporting: once after startup and network connection, then every 12 hours. The converter disables separate SDK reporting timers (`maximumReportInterval: 0xFFFF`) to avoid extra wakes and duplicate reports. After replacing the converter for an already paired device, run Reconfigure. Unknown 0xFF values are not shown as 0%.
 
-MQTT topic `zigbee2mqtt/DEVICE/set`, примеры:
+## Setup
+
+1. Add the contents of `swds1x.mjs` through **Settings > Dev console > External converters**, or place the file at `data/external_converters/swds1x.mjs` and restart Zigbee2MQTT.
+2. Enable permit join.
+3. Press and release D3. The LED indicates reset, then blinks while searching for the network.
+4. Wait for interview/configuration to finish. Zigbee-herdsman handles IAS enrollment; the converter binds the `ssIasZone` cluster on endpoint 1 to the coordinator and reads the initial state.
+
+See the [official external converter documentation](https://www.zigbee2mqtt.io/advanced/more/external_converters.html). A separate `external_converters` block in configuration.yaml is not needed for this installation method.
+
+Example MQTT payload on `zigbee2mqtt/DEVICE`:
 
 ```json
-{"state_l1":"ON","state_l2":"OFF"}
+{"contact":true}
 ```
 
-```json
-{"button_1_linked":false,"button_2_linked":true,"button_1_double_click":true,"button_2_double_click":false}
-```
+`true` means the reed switch is closed and the door is closed; `false` means the reed switch is released and the door is open. Open and close the door to check that each stable transition produces one LED pulse and updates `contact`.
 
-Чтение: `zigbee2mqtt/DEVICE/get`:
+Model: `swds1x`. Manufacturer: `Salu Workshop`. If the device previously ran relay firmware, remove its old relay entry and pair again after installing sensor firmware.
 
-```json
-{"button_1_linked":"","button_2_double_click":""}
-```
+Tamper is not exposed because no tamper input is implemented. Contact does not need separate attribute reporting configuration: transitions are sent through IAS Zone Status Change Notification, and `zoneStatus` can also be read.
 
-Настройки сохраняются в flash. После записи конвертер читает атрибут обратно и публикует подтверждённое значение. `true`/`false` должны быть JSON Boolean, не строками и не числами.
-
-События в `zigbee2mqtt/DEVICE`: `action` равен `button_1_single`, `button_1_double`, `button_1_hold`, `button_2_single`, `button_2_double` или `button_2_hold`. Двойные и длинные нажатия не переключают реле. Отключение связи кнопки с реле не отключает события. Для автоматизаций использовать action-события, включая повторные одинаковые действия.
-
-Стандартные On/Off-отчёты настраиваются и привязываются для обоих endpoint расширением `m.onOff`. Настройки `0xFC00` читаются на обоих endpoint. Кнопочные команды прошивка отправляет непосредственно координатору, endpoint 1; привязка для них не требуется.
-
-Проверено с `zigbee-herdsman-converters 26.108.1`: обработчики с подменой транспорта, загрузка/валидация настоящего внешнего конвертера и декодирование событий настоящим herdsman. Координатор и радио в проверках не участвовали.
+The converter has been tested with real imports from zigbee-herdsman-converters 26.111.0. Reed switch events, the smooth LED pulse, button operation and OTA have been confirmed on the device. The new battery algorithm requires validation after updating.

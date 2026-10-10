@@ -14,7 +14,7 @@
 #define MODULE_WATCHDOG_ENABLE   0
 
 #include "version_cfg.h"
-#include "../board_relay_2ch_8258.h"
+#include "../board_sensor_8258.h"
 
 typedef enum {
     EV_POLL_UART_PROC,

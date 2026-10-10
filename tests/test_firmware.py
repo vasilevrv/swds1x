@@ -18,9 +18,9 @@ def zcl_string(name):
     return "".join(values[1:])
 
 assert zcl_string("ZCL_BASIC_MFG_NAME") == "Salu Workshop"
-assert zcl_string("ZCL_BASIC_MODEL_ID") == "swrelay2x"
-assert zcl_string("ZCL_BASIC_SW_BUILD_ID") == "2026100404"
-print("PASS: Salu Workshop / swrelay2x Zigbee string lengths and build identity")
+assert zcl_string("ZCL_BASIC_MODEL_ID") == "swds1x"
+assert zcl_string("ZCL_BASIC_SW_BUILD_ID") == "2026101006"
+print("PASS: Salu Workshop / swds1x Zigbee string lengths and build identity")
 
 spec = importlib.util.spec_from_file_location("prepare_firmware", Path(__file__).resolve().parents[1] / "tools/prepare_firmware.py")
 module = importlib.util.module_from_spec(spec)
@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix="smart-plug-slot-") as tmp:
     root = Path(tmp)
     source, output = root / "raw.bin", root / "final.bin"
     tool = Path(module.__file__)
-    for size, accepted in ((0x69FF0, True), (0x69FFF, False), (0x6A000, False)):
+    for size, accepted in ((0x25FF0, True), (0x25FFF, False), (0x26000, False)):
         raw = bytearray(size); raw[8:12] = b"KNLT"
         struct.pack_into("<I", raw, 0x18, size); source.write_bytes(raw)
         result = subprocess.run([sys.executable, str(tool), str(source), str(output)], capture_output=True)
@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory(prefix="smart-plug-slot-") as tmp:
                             capture_output=True)
     assert result.returncode != 0 and b"Firmware preparation failed" in result.stderr
     assert not list(root.glob("*.tmp"))
-print("PASS: real SDK 424 KiB slot, padding/CRC boundary, oversized limit rejection")
+print("PASS: real SDK 152 KiB slot, padding/CRC boundary, oversized limit rejection")
 
 spec = importlib.util.spec_from_file_location("merge_firmware", tool.parent / "merge_firmware.py")
 merger = importlib.util.module_from_spec(spec)
@@ -86,16 +86,16 @@ def prepared(size):
     struct.pack_into("<I", raw, 0x18, size)
     return module.prepare(bytes(raw))
 
-boot, app = prepared(0xFFF0), prepared(0x69FF0)
+boot, app = prepared(0xFFF0), prepared(0x25FF0)
 combined = merger.merge(boot, app)
 assert combined[:len(boot)] == boot
 assert combined[len(boot):0x10000] == b"\xff" * (0x10000 - len(boot))
-assert combined[0x10000:] == app and len(combined) < 0x7A000
+assert combined[0x10000:] == app and len(combined) < 0x36000
 damaged = bytearray(app); damaged[32] ^= 1
 large_ram = bytearray(32); large_ram[8:12] = b"KNLT"
 struct.pack_into("<I", large_ram, 0x18, 32)
 struct.pack_into("<H", large_ram, 0x0c, 0x401)
-for bad_boot, bad_app in ((prepared(0x10000), app), (boot, prepared(0x6A000)),
+for bad_boot, bad_app in ((prepared(0x10000), app), (boot, prepared(0x26000)),
                           (boot, bytes(damaged)), (b"", app), (boot, app[:-1]),
                           (boot, module.prepare(bytes(large_ram)))):
     try:
@@ -114,20 +114,20 @@ spec.loader.exec_module(ota)
 raw = bytearray(64)
 raw[8:12] = b"KNLT"
 # Match platform/boot/8258/cstartup_8258.S: two-byte TJ, then FILE_VERSION.
-struct.pack_into("<I", raw, 2, 0x11044001)
-assert struct.unpack_from("<I", raw, 4)[0] == 0x00001104
-struct.pack_into("<HH", raw, 0x12, 0x1141, 0x03D3)
+struct.pack_into("<I", raw, 2, 0x110E4001)
+assert struct.unpack_from("<I", raw, 4)[0] == 0x0000110e
+struct.pack_into("<HH", raw, 0x12, 0x1141, 0x02D4)
 struct.pack_into("<I", raw, 0x18, 64)
 firmware = module.prepare(bytes(raw))
 container = ota.package(bytes(raw), firmware)
 assert struct.unpack_from("<I", container, 0)[0] == 0x0BEEF11E
-assert struct.unpack_from("<HHI", container, 10) == (0x1141, 0x03D3, 0x11044001)
+assert struct.unpack_from("<HHI", container, 10) == (0x1141, 0x02D4, 0x110E4001)
 assert struct.unpack_from("<I", container, 14)[0] > 285360129
-assert b"swrelay2x" in container[20:52]
+assert b"swds1x" in container[20:52]
 assert struct.unpack_from("<I", container, 52)[0] == len(container)
 assert struct.unpack_from("<HI", container, 56) == (0, len(firmware))
 assert container[62:] == firmware
-for bad in (0x03D2, 0x03D1):
+for bad in (0x03D4, 0x03D3, 0x03D2, 0x03D1):
     previous = bytearray(raw)
     struct.pack_into("<H", previous, 0x14, bad)
     try:
@@ -142,4 +142,4 @@ except ValueError:
     pass
 else:
     raise AssertionError("Mismatched raw/prepared OTA inputs accepted")
-print("PASS: relay OTA identity/version/header/payload, old smart-plug image rejection, mismatched input rejection")
+print("PASS: sensor OTA identity/version/header/payload, old smart-plug image rejection, mismatched input rejection")

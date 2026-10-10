@@ -24,7 +24,7 @@
  *******************************************************************************************************/
 #include "app_cfg.h"
 
-#if (__PROJECT_TL_RELAY_2CH__)
+#if (__PROJECT_TL_SWDS1X__)
 
 /**********************************************************************
  * INCLUDES
@@ -35,12 +35,12 @@
 #include "bdb.h"
 #include "ota.h"
 #include "app_main.h"
-#include "relay_control.h"
+#include "sensor_control.h"
+#include "app_ui.h"
 
 /**********************************************************************
  * TYPEDEFS
  */
-
 
 /**********************************************************************
  * LOCAL FUNCTIONS
@@ -60,8 +60,8 @@ bdb_appCb_t g_zbDemoBdbCb = {
 };
 
 #ifdef ZCL_OTA
-ota_callBack_t relay2_otaCb = {
-    relay2_otaProcessMsgHandler,
+ota_callBack_t sensor_otaCb = {
+    sensor_otaProcessMsgHandler,
 };
 #endif
 
@@ -77,7 +77,7 @@ static u32 retryStarted;
 /**********************************************************************
  * FUNCTIONS
  */
-static s32 relay2_bdbNetworkSteerStart(void *arg)
+static s32 sensor_bdbNetworkSteerStart(void *arg)
 {
     (void)arg;
     steerTimerEvt = NULL;
@@ -88,19 +88,19 @@ static s32 relay2_bdbNetworkSteerStart(void *arg)
     return -1;
 }
 
-void relay2_classicJoinStart(void)
+void sensor_classicJoinStart(void)
 {
     printf("start classic Join\n");
 
     u16 jitter = 1 + zb_random() % 0x0fff;
 
     if (!steerTimerEvt) {
-        steerTimerEvt = TL_ZB_TIMER_SCHEDULE(relay2_bdbNetworkSteerStart, NULL, jitter);
+        steerTimerEvt = TL_ZB_TIMER_SCHEDULE(sensor_bdbNetworkSteerStart, NULL, jitter);
         steerRetry = (steerTimerEvt == NULL);
     }
 }
 
-static s32 relay2_rejoinBackoff(void *arg)
+static s32 sensor_rejoinBackoff(void *arg)
 {
     (void)arg;
     static bool rejoinMode = REJOIN_SECURITY;
@@ -125,24 +125,30 @@ static s32 relay2_rejoinBackoff(void *arg)
     return 0;
 }
 
-void relay2_rejoinTimerStart(void)
+void sensor_rejoinTimerStart(void)
 {
     printf("start rejoin timer\n");
 
     if (!rejoinBackoffTimerEvt) {
-        rejoinBackoffTimerEvt = TL_ZB_TIMER_SCHEDULE(relay2_rejoinBackoff, NULL, 60 * 1000);
+        rejoinBackoffTimerEvt = TL_ZB_TIMER_SCHEDULE(sensor_rejoinBackoff, NULL, 60 * 1000);
         rejoinRetry = (rejoinBackoffTimerEvt == NULL);
     }
 }
 
-void relay2_networkTask(void)
+bool sensor_networkCanSleep(void)
 {
-    if (!clock_time_exceed(retryStarted, 1000000UL)) {
+    return !steerRetry && !rejoinRetry;
+}
+
+void sensor_networkTask(void)
+{
+    u32 now = app_nowMs();
+    if ((u32)(now - retryStarted) < 1000U) {
         return;
     }
-    retryStarted = clock_time();
-    if (steerRetry) relay2_classicJoinStart();
-    if (rejoinRetry) relay2_rejoinTimerStart();
+    retryStarted = now;
+    if (steerRetry) sensor_classicJoinStart();
+    if (rejoinRetry) sensor_rejoinTimerStart();
 }
 
 /*********************************************************************
@@ -162,12 +168,15 @@ void zbdemo_bdbInitCb(u8 status, u8 joinedNetwork)
 
     if (status == BDB_INIT_STATUS_SUCCESS) {
         if (joinedNetwork) {
+            zb_setPollRate(5000);
+            sensor_markPending();
 #ifdef ZCL_OTA
             ota_queryStart(OTA_PERIODIC_QUERY_INTERVAL);
 #endif
         } else {
+            statusLed_blinkStart(0, 100, 900);
 #if (!ZBHCI_EN)
-            relay2_classicJoinStart();
+            sensor_classicJoinStart();
 #endif
         }
     }
@@ -191,7 +200,9 @@ void zbdemo_bdbCommissioningCb(u8 status, void *arg)
 
     switch (status) {
     case BDB_COMMISSION_STA_SUCCESS:
-        statusLed_blinkStart(2, 200, 200);
+        statusLed_blinkStop();
+        zb_setPollRate(5000);
+        sensor_markPending();
 
 #ifdef ZCL_OTA
         ota_queryStart(OTA_PERIODIC_QUERY_INTERVAL);
@@ -205,7 +216,7 @@ void zbdemo_bdbCommissioningCb(u8 status, void *arg)
     case BDB_COMMISSION_STA_NO_NETWORK:
     case BDB_COMMISSION_STA_TCLK_EX_FAILURE:
     case BDB_COMMISSION_STA_TARGET_FAILURE:
-        relay2_classicJoinStart();
+        sensor_classicJoinStart();
         break;
     case BDB_COMMISSION_STA_FORMATION_FAILURE:
         break;
@@ -219,7 +230,7 @@ void zbdemo_bdbCommissioningCb(u8 status, void *arg)
         break;
     case BDB_COMMISSION_STA_REJOIN_FAILURE:
     case BDB_LOSS_CONNECTIVITY:
-        relay2_rejoinTimerStart();
+        sensor_rejoinTimerStart();
         break;
     case BDB_COMMISSION_STA_FORMATION_DONE:
 #ifndef ZBHCI_EN
@@ -233,13 +244,18 @@ void zbdemo_bdbCommissioningCb(u8 status, void *arg)
 
 void zbdemo_bdbIdentifyCb(u8 endpoint, u16 srcAddr, u16 identifyTime)
 {
-    relay2_zclIdentifyCmdHandler(endpoint, srcAddr, identifyTime);
+    sensor_zclIdentifyCmdHandler(endpoint, srcAddr, identifyTime);
 }
 
 #ifdef ZCL_OTA
-void relay2_otaProcessMsgHandler(u8 evt, u8 status)
+void sensor_otaProcessMsgHandler(u8 evt, u8 status)
 {
-    if (evt == OTA_EVT_COMPLETE) {
+    if (evt == OTA_EVT_START && status == ZCL_STA_SUCCESS) {
+        zb_setPollRate(QUEUE_POLL_RATE);
+    } else if (evt == OTA_EVT_IMAGE_DONE) {
+        zb_setPollRate(5000);
+    } else if (evt == OTA_EVT_COMPLETE) {
+        zb_setPollRate(5000);
         if (status == ZCL_STA_SUCCESS) {
             ota_mcuReboot();
         } else {
@@ -249,7 +265,7 @@ void relay2_otaProcessMsgHandler(u8 evt, u8 status)
 }
 #endif
 
-static s32 relay2_softReset(void *arg)
+static s32 sensor_softReset(void *arg)
 {
     (void)arg;
     SYSTEM_RESET();
@@ -258,7 +274,7 @@ static s32 relay2_softReset(void *arg)
 }
 
 /*********************************************************************
- * @fn      relay2_leaveCnfHandler
+ * @fn      sensor_leaveCnfHandler
  *
  * @brief   Handler for ZDO Leave Confirm message.
  *
@@ -266,20 +282,20 @@ static s32 relay2_softReset(void *arg)
  *
  * @return  None
  */
-void relay2_leaveCnfHandler(nlme_leave_cnf_t *pLeaveCnf)
+void sensor_leaveCnfHandler(nlme_leave_cnf_t *pLeaveCnf)
 {
     if (pLeaveCnf->status == SUCCESS) {
         statusLed_blinkStart(3, 200, 200);
 
         //waiting blink over
-        if (!TL_ZB_TIMER_SCHEDULE(relay2_softReset, NULL, 2 * 1000)) {
-            relay2_softReset(NULL);
+        if (!TL_ZB_TIMER_SCHEDULE(sensor_softReset, NULL, 2 * 1000)) {
+            sensor_softReset(NULL);
         }
     }
 }
 
 /*********************************************************************
- * @fn      relay2_leaveIndHandler
+ * @fn      sensor_leaveIndHandler
  *
  * @brief   Handler for ZDO leave indication message.
  *
@@ -287,19 +303,19 @@ void relay2_leaveCnfHandler(nlme_leave_cnf_t *pLeaveCnf)
  *
  * @return  None
  */
-void relay2_leaveIndHandler(nlme_leave_ind_t *pLeaveInd)
+void sensor_leaveIndHandler(nlme_leave_ind_t *pLeaveInd)
 {
     (void)pLeaveInd;
 }
 
-bool relay2_panidConflictIndicateHandler(u16 newPanId)
+bool sensor_panidConflictIndicateHandler(u16 newPanId)
 {
     (void)newPanId;
     return FALSE;
 }
 
 /*********************************************************************
- * @fn      relay2_nwkStatusIndHandler
+ * @fn      sensor_nwkStatusIndHandler
  *
  * @brief   Handler for NWK status indication message.
  *
@@ -307,7 +323,7 @@ bool relay2_panidConflictIndicateHandler(u16 newPanId)
  *
  * @return  None
  */
-void relay2_nwkStatusIndHandler(zdo_nwk_status_ind_t *pNwkStatusInd)
+void sensor_nwkStatusIndHandler(zdo_nwk_status_ind_t *pNwkStatusInd)
 {
     printf("nwkStatusIndHandler: addr = %x, status = %x\n", pNwkStatusInd->shortAddr, pNwkStatusInd->status);
 
@@ -321,4 +337,4 @@ void relay2_nwkStatusIndHandler(zdo_nwk_status_ind_t *pNwkStatusInd)
     }
 }
 
-#endif  /* __PROJECT_TL_RELAY_2CH__ */
+#endif  /* __PROJECT_TL_SWDS1X__ */

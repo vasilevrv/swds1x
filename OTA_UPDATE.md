@@ -1,27 +1,26 @@
-# Zigbee OTA — swrelay2x
+# swds1x OTA
 
-OTA сохраняется для последующих обновлений реле после первой аппаратной установки нашего совместимого загрузчика. При переходе с розетки на реле сначала прошить `build/relay_2ch_factory.bin` аппаратно и подключить устройство заново.
+First install a compatible combined bootloader/application through SWS. Image type **0x02D4** distinguishes swds1x from relay firmware using 0x03D3; migration from a relay requires the combined image.
 
-Новая идентичность: manufacturer code `0x1141`, image type **`0x03D3`**, file version **`0x11044001`**, Basic model **`swrelay2x`**, SW build `2026100404`. Image type розетки `0x03D2` намеренно отличается: обычное OTA не должно подменить её прошивку реле с другой распиновкой.
+Current identity:
 
-Из директории проекта, после настройки GPIO:
+- Basic manufacturer: `Salu Workshop`; model: `swds1x`.
+- OTA manufacturer code: 0x1141 (inherited Telink code).
+- Image type: 0x02D4.
+- File version: 0x110E4001; SW build ID: 2026101006.
+
+Before a new release, increment APP_BUILD in `version_cfg.h` and update the SW build ID in `zcl_clusters.c` and the test assertions.
 
 ```sh
 make -j4 ota TOOLCHAIN_PREFIX=/path/to/bin/tc32-elf-
 ```
 
-Результат: `build/boot1/relay_2ch.zigbee`. Если toolchain в PATH, убрать `TOOLCHAIN_PREFIX`. Упаковщик проверяет соответствие raw/prepared BIN, CRC, размер слота и OTA image type; в контейнер входит только приложение.
+Upload **`build/boot1/swds1x.zigbee`** as custom firmware in Zigbee2MQTT. A combined BIN, raw BIN or bootloader image cannot be used for this operation. The converter does not configure a public OTA provider; use the [Zigbee2MQTT custom firmware flow](https://www.zigbee2mqtt.io/guide/usage/ota_updates.html#using-custom-firmware-files-or-index).
 
-Версия читается из BIN по адресу `0x02`: перед ней находится двухбайтовая команда TJ стартового кода TLSR8258. Ошибочное чтение с `0x04` давало `0x00001104` вместо `0x11044001` и мешало выбору обновления в Zigbee2MQTT. Если OTA-файл собран старым упаковщиком, пересобрать его командой `make -j4 ota`.
-
-Установить внешний конвертер [relay_2ch.mjs](zigbee2mqtt/relay_2ch.mjs), в нём включён `ota: true`. В Zigbee2MQTT использовать загрузку собственного файла обновления. Подробности актуальной процедуры: [официальная документация Zigbee2MQTT](https://www.zigbee2mqtt.io/guide/usage/ota_updates.html).
-
-При использовании MQTT API скопировать контейнер в доступную процессу Zigbee2MQTT директорию, например `/app/data/ota/relay_2ch.zigbee`, и отправить запрос в `zigbee2mqtt/bridge/request/device/ota_update/update`:
+Example MQTT request to `zigbee2mqtt/bridge/request/device/ota_update/update`:
 
 ```json
-{"id":"DEVICE_IEEE_OR_FRIENDLY_NAME","url":"/app/data/ota/relay_2ch.zigbee"}
+{"id":"DEVICE_IEEE_OR_FRIENDLY_NAME","url":"/app/data/ota/swds1x.zigbee"}
 ```
 
-Для Docker путь относится к контейнеру Zigbee2MQTT. Следить за ответом и прогрессом обновления. При следующем выпуске увеличить FILE_VERSION в `version_cfg.h` и обновить SW build ID в `zcl_clusters.c`.
-
-Успешное OTA перезапускает устройство; настройки кнопок и StartUpOnOff сохраняются. Перед применением прошивки загрузчик держит оба реле выключенными. Цепочка упаковки/проверки загрузчика протестирована программно, фактическая передача OTA по радио в этой работе не проверялась.
+The file must be accessible to the Zigbee2MQTT process. The new version must be higher than the installed version. OTA preserves network settings and IAS enrollment; application OTA does not update the bootloader. Polling switches to 250 ms during download and returns to 5 seconds afterward. OTA operation has been confirmed on the device with earlier builds; each newly built image still requires validation.

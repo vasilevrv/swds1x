@@ -27,13 +27,13 @@
 #include "comm_cfg.h"
 
 #if !defined(MCU_CORE_8258)
-#error "swrelay2x supports TLSR8258 only"
+#error "swds1x supports TLSR8258 only"
 #endif
-#define CHIP_TYPE                       TLSR_8258_1M
-#define FLASH_CAP_SIZE_1M               1
+#define CHIP_TYPE                       TLSR_8258_512K
+#define FLASH_CAP_SIZE_1M               0
 
 #define APP_RELEASE                     0x11//app release 1.1
-#define APP_BUILD                       0x04//app build 04
+#define APP_BUILD                       0x0E//app build 14
 #define STACK_RELEASE                   0x40//stack release 4.0
 #define STACK_BUILD                     0x01//stack build 01
 
@@ -42,8 +42,8 @@
  * Refer to ZCL OTA specification for details.
  */
 #define MANUFACTURER_CODE               MANUFACTURER_CODE_TELINK//Telink ID
-#define RELAY_IMAGE_TYPE_DEVICE         0x53
-#define IMAGE_TYPE                      ((CHIP_TYPE << 8) | RELAY_IMAGE_TYPE_DEVICE | (IMAGE_TYPE_BOOT_FLAG << 7))
+#define SENSOR_IMAGE_TYPE_DEVICE         0x54
+#define IMAGE_TYPE                      ((CHIP_TYPE << 8) | SENSOR_IMAGE_TYPE_DEVICE | (IMAGE_TYPE_BOOT_FLAG << 7))
 #define	FILE_VERSION                    ((APP_RELEASE << 24) | (APP_BUILD << 16) | (STACK_RELEASE << 8) | STACK_BUILD)
 
 /* Pre-compiled link configuration. */

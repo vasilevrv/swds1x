@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Combine prepared bootloader/application BINs for TLSR8258 1 MiB flash.
+"""Combine prepared bootloader/application BINs for TLSR8258 512 KiB flash.
 
 Output starts at flash offset 0. It ends after the application, before OTA/NV.
 Each input retains its own header and CRC. Do not run prepare_firmware on output.
@@ -11,7 +11,7 @@ import tempfile
 import zlib
 
 APP_OFFSET = 0x10000
-APP_SLOT_SIZE = 0x6A000
+APP_SLOT_SIZE = 0x26000
 
 
 def validate(image: bytes, maximum: int, name: str) -> None:

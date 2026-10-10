@@ -22,15 +22,15 @@ def package(raw: bytes, prepared: bytes) -> bytes:
         raise ValueError("Application RAM code exceeds bootloader reservation")
     version = struct.unpack_from("<I", raw, 2)[0]
     manufacturer, image_type = struct.unpack_from("<HH", raw, 0x12)
-    if manufacturer != 0x1141 or image_type != 0x03D3:
-        raise ValueError("Expected TLSR8258 1M bootloader-mode application (1141/03D3)")
+    if manufacturer != 0x1141 or image_type != 0x02D4:
+        raise ValueError("Expected TLSR8258F512 bootloader-mode application (1141/02D4)")
     total = 56 + 6 + len(prepared)
     # SDK checks the complete advertised OTA image size against this limit.
     if total > APP_SLOT_SIZE:
         raise ValueError("OTA container exceeds SDK OTA image size limit")
     header = struct.pack("<IHHHHHIH32sI", 0x0BEEF11E, 0x0100, 56, 0,
                          manufacturer, image_type, version, 2,
-                         b"Salu Workshop swrelay2x".ljust(32, b"\0"), total)
+                         b"Salu Workshop swds1x".ljust(32, b"\0"), total)
     return header + struct.pack("<HI", 0, len(prepared)) + prepared
 
 

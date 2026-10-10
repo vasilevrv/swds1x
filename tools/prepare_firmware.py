@@ -11,7 +11,7 @@ import struct
 import zlib
 import tempfile
 
-FLASH_SLOT_SIZE = 0x6A000  # SDK TLSR8258 1M: (0xE4000 - 0x10000) / 2.
+FLASH_SLOT_SIZE = 0x26000  # SDK TLSR8258F512: (0x5C000 - 0x10000) / 2.
 
 
 def prepare(raw: bytes) -> bytes:
@@ -37,12 +37,12 @@ def main() -> None:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--max-size", type=lambda value: int(value, 0), default=FLASH_SLOT_SIZE,
-                        help="Maximum final size in bytes (default: 0x6A000 / 424 KiB)")
+                        help="Maximum final size in bytes (default: 0x26000 / 152 KiB)")
     args = parser.parse_args()
     temporary = None
     try:
         if not 0 < args.max_size <= FLASH_SLOT_SIZE:
-            raise ValueError("Size limit must be within the TLSR8258 1M slot: 1..0x6A000")
+            raise ValueError("Size limit must be within the TLSR8258F512 slot: 1..0x26000")
         image = prepare(args.input.read_bytes())
         if len(image) > args.max_size:
             raise ValueError(f"Image {len(image)} exceeds flash slot limit {args.max_size}")

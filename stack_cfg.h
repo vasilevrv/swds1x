@@ -33,6 +33,7 @@
 /**
  *  @brief  NVRAM
  */
+#define ZB_MAC_RX_ON_WHEN_IDLE 0
 #define NV_ENABLE                       1
 
 /**
